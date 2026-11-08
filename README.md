@@ -56,6 +56,7 @@ java -jar offline-regression.jar /path/to/first.csv /path/to/second.csv
 ```
 
 You can also run the local JUnit tests from Android Studio.
+The GitHub Actions workflow **Android Debug APK** builds a debug APK and runs tests on pull requests; check its status before assuming an APK is ready.
 
 ## Next phase (not yet implemented)
 
