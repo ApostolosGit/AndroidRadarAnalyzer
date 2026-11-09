@@ -1,8 +1,5 @@
 name: Import and build AIRCAT500 Mobile v1.0
 on:
-  push:
-    branches: [feature/mobile-v1-desktop-port]
-    paths: [".github/aircat_v1_sources.b64"]
   workflow_dispatch:
 permissions:
   contents: write
