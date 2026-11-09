@@ -7,12 +7,16 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.view.View
 import kotlin.math.min
+import kotlin.math.cos
+import kotlin.math.sin
 
 /** Lightweight native Canvas renderer. Coordinates reproduce the Windows sign convention. */
 class RadarView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val sectorShade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(55, 88, 211, 142) }
     var state: RadarReplayState? = null
+        set(value) { field = value; invalidate() }
+    var sweepAzimuthDegrees: Float = Float.NaN
         set(value) { field = value; invalidate() }
     var coordinateDivisor = 32.0
         set(value) { field = value; invalidate() }
@@ -39,11 +43,20 @@ class RadarView(context: Context) : View(context) {
         canvas.drawText("250 NM", cx + radius * .53f, cy - 7f, paint)
 
         val current = state ?: return
-        current.sector?.let { sector ->
-            val disk = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
-            canvas.drawArc(disk, -90f + sector * (360f / 32), 360f / 32, true, sectorShade)
-        }
+        val bearing = if (sweepAzimuthDegrees.isNaN())
+            (current.sector ?: 0) * (360f / 32f) else sweepAzimuthDegrees
+        val disk = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
+        // Sector cone and sweep line move smoothly between recorded packets.
+        canvas.drawArc(disk, -90f + bearing, 360f / 32f, true, sectorShade)
+        val radians = Math.toRadians((bearing - 90f).toDouble())
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 2f * resources.displayMetrics.density
+        paint.color = color("#63EEA8")
+        canvas.drawLine(cx, cy,
+            cx + (radius * cos(radians)).toFloat(),
+            cy + (radius * sin(radians)).toFloat(), paint)
         val tracks = current.allTracks()
+        val labelAreas = ArrayList<RectF>()
         val clipRange = 250.0 * coordinateDivisor
         for ((index, track) in tracks.withIndex()) {
             if (kotlin.math.hypot(track.xRaw.toDouble(), track.yRaw.toDouble()) > clipRange) continue
@@ -55,7 +68,15 @@ class RadarView(context: Context) : View(context) {
             if (tracks.size < 30 || index % 7 == 0) {
                 paint.textSize = 10f * resources.displayMetrics.scaledDensity
                 val label = if (track.modeA != null) "${track.number}/${track.modeA}" else "${track.number}"
-                canvas.drawText(label, x + 6f, y - 4f, paint)
+                val labelWidth = paint.measureText(label)
+                val lx = if (x + labelWidth + 9f < width) x + 7f else x - labelWidth - 7f
+                val ly = y - 5f
+                val area = RectF(lx, ly - paint.textSize, lx + labelWidth, ly + 3f)
+                if (lx >= 0 && ly - paint.textSize >= 0 &&
+                    labelAreas.none { RectF.intersects(it, area) }) {
+                    canvas.drawText(label, lx, ly, paint)
+                    labelAreas.add(area)
+                }
             }
         }
         paint.color = color("#9AB6C0")
