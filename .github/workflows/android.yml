@@ -22,6 +22,11 @@ jobs:
             cat .github/v1parts/part-*.b64 | base64 --decode > /tmp/aircat-v1.tar.xz
             echo '7fab5aec624fe254a71231bf441d36a8944502c32142a96bd6f2e14fb098eb31  /tmp/aircat-v1.tar.xz' | sha256sum --check
             tar -xJf /tmp/aircat-v1.tar.xz
+            # Android SDK compile fixes verified against the user-supplied Python port.
+            sed -i 's/^        fillViewport = true$/        isFillViewport = true/' app/src/main/java/gr/aircat/android/MainActivity.kt
+            sed -i 's/^            filter = currentFilter$/            this.filter = currentFilter/' app/src/main/java/gr/aircat/android/MainActivity.kt
+            grep -q 'isFillViewport = true' app/src/main/java/gr/aircat/android/MainActivity.kt
+            grep -q 'this.filter = currentFilter' app/src/main/java/gr/aircat/android/MainActivity.kt
             rm .github/aircat_v1_sources.b64
             rm -rf .github/v1parts
           fi
