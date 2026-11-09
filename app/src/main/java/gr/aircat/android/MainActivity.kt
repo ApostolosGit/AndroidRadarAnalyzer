@@ -5,10 +5,12 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.View
+import android.view.WindowInsets
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -32,6 +34,8 @@ class MainActivity : Activity() {
     private var playAtElapsed = 0L
     private var monitoring = false
     private var changingSeek = false
+    private var lastSectorEpoch = 0.0
+    private val sectorSeconds = 3.956 / 32.0
 
     private lateinit var info: TextView
     private lateinit var monitor: TextView
@@ -72,8 +76,21 @@ class MainActivity : Activity() {
             setBackgroundColor(neutral)
             setPadding(dp(6), dp(7), dp(6), dp(6))
         }
+        // Android 15 enforces edge-to-edge for target 35, so respect status/nav bars.
+        root.setOnApplyWindowInsetsListener { _, insets ->
+            val system = if (Build.VERSION.SDK_INT >= 30) {
+                insets.getInsets(WindowInsets.Type.systemBars())
+            } else null
+            val left = system?.left ?: insets.systemWindowInsetLeft
+            val top = system?.top ?: insets.systemWindowInsetTop
+            val right = system?.right ?: insets.systemWindowInsetRight
+            val bottom = system?.bottom ?: insets.systemWindowInsetBottom
+            root.setPadding(dp(6) + left, dp(7) + top, dp(6) + right, dp(6) + bottom)
+            insets
+        }
         setContentView(root)
-        root.addView(label("AIRCAT500 Mobile  •  Offline Radar Analyzer", 18f))
+        root.requestApplyInsets()
+        root.addView(label("AIRCAT500 Mobile  •  Radar Replay", 17f))
         val loadButton = button("Άνοιγμα CSV") { chooseCsv() }
         modeButton = button("Monitoring") { monitoring = !monitoring; switchMode() }
         root.addView(row(loadButton, modeButton))
@@ -151,6 +168,8 @@ class MainActivity : Activity() {
                     progress.visibility = View.GONE
                     seek.max = (imported.packets.size - 1).coerceAtLeast(0)
                     jumpTo(0)
+                    // Start moving as soon as the real capture is loaded.
+                    play()
                 }
             } catch (ex: Exception) {
                 runOnUiThread {
@@ -179,8 +198,15 @@ class MainActivity : Activity() {
         pause()
         cursor = index.coerceIn(0, packets.lastIndex)
         state.clear()
-        for (i in 0..cursor) state.apply(packets[i])
+        lastSectorEpoch = packets.first().epochSeconds
+        // Rebuild only from recorded targets; do not invent packets.
+        for (i in 0..cursor) {
+            val packet = packets[i]
+            state.apply(packet)
+            if (packet.sector != null || packet.kind == 0x19) lastSectorEpoch = packet.epochSeconds
+        }
         cursor++
+        updateSweep(packets[cursor - 1].epochSeconds)
         showFrame()
     }
     private val ticker = object : Runnable {
@@ -191,15 +217,25 @@ class MainActivity : Activity() {
                     (SystemClock.elapsedRealtime() - playAtElapsed) * speed / 1000.0
                 var updates = 0
                 while (cursor < packets.size && updates < 300 && packets[cursor].epochSeconds <= targetEpoch) {
-                    state.apply(packets[cursor++])
+                    val packet = packets[cursor++]
+                    state.apply(packet)
+                    if (packet.sector != null || packet.kind == 0x19) lastSectorEpoch = packet.epochSeconds
                     updates++
                 }
                 if (updates != 0) showFrame()
+                // Animate between consecutive recorded sectors at ~30 FPS.
+                updateSweep(targetEpoch)
                 if (cursor >= packets.size) pause()
             }
             mainHandler.postDelayed(this, 33)
         }
     }
+    private fun updateSweep(playbackEpoch: Double) {
+        val sector = state.sector ?: 0
+        val ageSeconds = (playbackEpoch - lastSectorEpoch).coerceIn(0.0, sectorSeconds)
+        radar.sweepAzimuthDegrees = ((sector + ageSeconds / sectorSeconds) * 360.0 / 32.0).toFloat()
+    }
+
     private fun showFrame() {
         val data = capture ?: return
         val stats = data.summary
