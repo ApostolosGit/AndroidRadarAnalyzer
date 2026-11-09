@@ -1,1 +1,2 @@
 This marker triggers import-v1.yml; source is assembled from .github/v1parts/part-01..08.b64.
+Start build: complete 8-part source bundle and verify SHA-256.
