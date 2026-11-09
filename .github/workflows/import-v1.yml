@@ -18,10 +18,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 --decode .github/aircat_v1_sources.b64 > /tmp/aircat-v1.tar.xz
+          test "$(find .github/v1parts -name 'part-*.b64' | wc -l)" -eq 8
+          cat .github/v1parts/part-*.b64 | base64 --decode > /tmp/aircat-v1.tar.xz
           echo '7fab5aec624fe254a71231bf441d36a8944502c32142a96bd6f2e14fb098eb31  /tmp/aircat-v1.tar.xz' | sha256sum --check
           tar -xJf /tmp/aircat-v1.tar.xz
           rm .github/aircat_v1_sources.b64
+          rm -rf .github/v1parts
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -45,6 +47,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A README.md app/build.gradle.kts app/src/main/java/gr/aircat/android app/src/test/java/gr/aircat/android .github/aircat_v1_sources.b64
+          git add -A README.md app/build.gradle.kts app/src/main/java/gr/aircat/android app/src/test/java/gr/aircat/android .github/aircat_v1_sources.b64 .github/v1parts
           git commit -m "AIRCAT500 Mobile v1.0: port desktop analyzer diagnostics and replay"
           git push origin HEAD:feature/mobile-v1-desktop-port
