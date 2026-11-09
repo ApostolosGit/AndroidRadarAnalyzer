@@ -1,11 +1,12 @@
 package gr.aircat.android
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
-import android.os.Bundle
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -21,259 +22,378 @@ import java.io.InputStreamReader
 import java.util.Locale
 import java.util.concurrent.Executors
 
-/** Phase 1: real AIRCAT500 CSV replay on Android; no Wi-Fi firmware required. */
+/** AIRCAT500 Mobile v1.0 — Android port of the desktop v9.16 analysis/replay features. */
 class MainActivity : Activity() {
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private val readExecutor = Executors.newSingleThreadExecutor()
-    private val state = RadarReplayState()
+    private val ui = Handler(Looper.getMainLooper())
+    private val worker = Executors.newSingleThreadExecutor()
+    private val replay = RadarReplayState()
     private var capture: RadarCapture? = null
-    private var cursor = 0
+    private var diagnostics: CaptureDiagnostics? = null
+    private var record = 0
     private var playing = false
     private var speed = 1.0
-    private var playAtEpoch = 0.0
-    private var playAtElapsed = 0L
-    private var monitoring = false
+    private var startTime = 0.0
+    private var clockStart = 0L
+    private var sectorEpoch = 0.0
+    private var sectorSeconds = 0.123625 // Default 3.956 s per scan / 32; updated from NORTH median
     private var changingSeek = false
-    private var lastSectorEpoch = 0.0
-    private val sectorSeconds = 3.956 / 32.0
+    private var tab = 0
+    private var chartMode = 0
+    private var currentFilter = RadarFilter()
+    private var pendingReport: String? = null
 
     private lateinit var info: TextView
     private lateinit var monitor: TextView
-    private lateinit var seek: SeekBar
+    private lateinit var errors: TextView
+    private lateinit var alerts: TextView
     private lateinit var radar: RadarView
-    private lateinit var playButton: Button
-    private lateinit var speedButton: Button
-    private lateinit var modeButton: Button
+    private lateinit var chart: ChartView
     private lateinit var progress: ProgressBar
-    private val darkText = Color.rgb(17, 26, 30)
-    private val neutral = Color.rgb(231, 234, 236)
+    private lateinit var seek: SeekBar
+    private lateinit var play: Button
+    private lateinit var rate: Button
+    private lateinit var chartModeButton: Button
+    private lateinit var showViews: Array<View>
+    private lateinit var tabButtons: Array<Button>
 
-    private fun label(text: String, size: Float = 13f): TextView = TextView(this).apply {
+    private val fg = Color.rgb(16, 20, 22)
+    private val bg = Color.rgb(235, 237, 239)
+    private fun dp(x: Int) = (x * resources.displayMetrics.density + .5f).toInt()
+    private fun title(text: String, size: Float = 12f) = TextView(this).apply {
         this.text = text
         textSize = size
-        setTextColor(darkText)
-        setPadding(dp(8), dp(4), dp(8), dp(4))
+        setTextColor(fg)
+        setPadding(dp(7), dp(4), dp(7), dp(4))
+        maxLines = 3
     }
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + .5f).toInt()
-    private fun button(title: String, action: () -> Unit): Button = Button(this).apply {
-        text = title
-        textSize = 12f
-        setTextColor(Color.BLACK)
+    private fun button(text: String, size: Float = 11f, onTap: () -> Unit) = Button(this).apply {
+        this.text = text
+        textSize = size
         isAllCaps = false
-        setOnClickListener { action() }
+        setTextColor(Color.BLACK)
+        setPadding(dp(1), dp(1), dp(1), dp(1))
+        setOnClickListener { onTap() }
     }
-    private fun row(vararg items: View): LinearLayout = LinearLayout(this).apply {
+    private fun row(vararg views: View, height: Int = 43) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        for (item in items) addView(item, LinearLayout.LayoutParams(0, dp(46), 1f))
+        for (view in views) addView(view, LinearLayout.LayoutParams(0, dp(height), 1f))
+    }
+    private fun scrollText(output: TextView): ScrollView = ScrollView(this).apply {
+        isFillViewport = true
+        setBackgroundColor(Color.rgb(248, 249, 250))
+        addView(output)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = Color.rgb(44, 52, 57)
-        window.navigationBarColor = Color.rgb(44, 52, 57)
+        window.statusBarColor = Color.rgb(49, 56, 60)
+        window.navigationBarColor = Color.rgb(49, 56, 60)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(neutral)
-            setPadding(dp(6), dp(7), dp(6), dp(6))
+            setBackgroundColor(bg)
+            setPadding(dp(5), dp(5), dp(5), dp(5))
         }
-        // Android 15 enforces edge-to-edge for target 35, so respect status/nav bars.
+        // Android 15 / target 35: keep buttons clear of status & navigation bars.
         root.setOnApplyWindowInsetsListener { _, insets ->
-            val system = if (Build.VERSION.SDK_INT >= 30) {
-                insets.getInsets(WindowInsets.Type.systemBars())
-            } else null
-            val left = system?.left ?: insets.systemWindowInsetLeft
-            val top = system?.top ?: insets.systemWindowInsetTop
-            val right = system?.right ?: insets.systemWindowInsetRight
-            val bottom = system?.bottom ?: insets.systemWindowInsetBottom
-            root.setPadding(dp(6) + left, dp(7) + top, dp(6) + right, dp(6) + bottom)
+            val bars = if (Build.VERSION.SDK_INT >= 30) insets.getInsets(WindowInsets.Type.systemBars()) else null
+            val left = bars?.left ?: insets.systemWindowInsetLeft
+            val top = bars?.top ?: insets.systemWindowInsetTop
+            val right = bars?.right ?: insets.systemWindowInsetRight
+            val bottom = bars?.bottom ?: insets.systemWindowInsetBottom
+            root.setPadding(dp(5) + left, dp(5) + top, dp(5) + right, dp(5) + bottom)
             insets
         }
         setContentView(root)
         root.requestApplyInsets()
-        root.addView(label("AIRCAT500 Mobile  •  Radar Replay", 17f))
-        val loadButton = button("Άνοιγμα CSV") { chooseCsv() }
-        modeButton = button("Monitoring") { monitoring = !monitoring; switchMode() }
-        root.addView(row(loadButton, modeButton))
-        info = label("Άνοιξε ένα πραγματικό AIRCAT500 CSV για να ξεκινήσει το Replay.")
+
+        root.addView(title("AIRCAT500 Mobile  v1.0", 17f))
+        val open = button("Άνοιγμα", 11f) { chooseFile() }
+        val filter = button("Φίλτρα", 11f) { chooseFilters() }
+        val export = button("Report", 11f) { exportReport() }
+        root.addView(row(open, filter, export))
+        info = title("Άνοιξε αρχείο CSV, BIN, PCAP ή PCAPNG για Offline Replay.", 12f)
         root.addView(info)
         progress = ProgressBar(this).apply { visibility = View.GONE; isIndeterminate = true }
-        root.addView(progress, LinearLayout.LayoutParams(-1, dp(5)))
+        root.addView(progress, LinearLayout.LayoutParams(-1, dp(4)))
 
-        radar = RadarView(this).apply { state = this@MainActivity.state }
-        root.addView(radar, LinearLayout.LayoutParams(-1, 0, 1f))
-        monitor = label("")
-        val scroller = ScrollView(this).apply {
-            addView(monitor)
-            visibility = View.GONE
+        tabButtons = arrayOf(
+            button("Radar", 10f) { showTab(0) },
+            button("Monitor", 10f) { showTab(1) },
+            button("Errors", 10f) { showTab(2) },
+            button("Alerts", 10f) { showTab(3) },
+            button("Charts", 10f) { showTab(4) }
+        )
+        root.addView(row(*tabButtons, height = 42))
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        radar = RadarView(this).apply {
+            state = replay
+            this.filter = currentFilter
+            onTrackTap = { track -> showTrack(track) }
         }
-        root.addView(scroller, LinearLayout.LayoutParams(-1, 0, 1f))
-        monitorView = scroller
-
+        monitor = title("Δεν έχει φορτωθεί αρχείο.")
+        errors = title("Δεν υπάρχουν στοιχεία σφαλμάτων.")
+        alerts = title("Δεν υπάρχουν στοιχεία alerts.")
+        chart = ChartView(this)
+        val views: Array<View> = arrayOf(radar, scrollText(monitor), scrollText(errors), scrollText(alerts), chart)
+        showViews = views
+        views.forEach { body.addView(it, LinearLayout.LayoutParams(-1, 0, 1f)) }
+        chartModeButton = button("SECTOR PACKETS  ▾", 11f) {
+            chartMode = (chartMode + 1) % 4
+            chart.chartMode = chartMode
+            chartModeButton.text = listOf("SECTOR PACKETS  ▾", "MISSING SECTORS  ▾", "AIRCAT TYPES  ▾", "ALERTS  ▾")[chartMode]
+        }
+        root.addView(chartModeButton, LinearLayout.LayoutParams(-1, dp(35)))
         seek = SeekBar(this).apply {
             max = 0
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(b: SeekBar?, position: Int, fromUser: Boolean) {
-                    if (fromUser) { changingSeek = true; info.text = "Εγγραφή ${position + 1} / ${capture?.packets?.size ?: 0}" }
+                override fun onProgressChanged(bar: SeekBar?, index: Int, fromUser: Boolean) {
+                    if (fromUser) { changingSeek = true; info.text = "Εγγραφή ${index + 1} / ${capture?.packets?.size ?: 0}" }
                 }
-                override fun onStartTrackingTouch(b: SeekBar?) { changingSeek = true }
-                override fun onStopTrackingTouch(b: SeekBar?) {
+                override fun onStartTrackingTouch(bar: SeekBar?) { changingSeek = true }
+                override fun onStopTrackingTouch(bar: SeekBar?) {
                     changingSeek = false
                     jumpTo(seek.progress)
                 }
             })
         }
         root.addView(seek)
-        playButton = button("▶ Play") { if (playing) pause() else play() }
-        speedButton = button("1×") {
+        play = button("▶ Play") { if (playing) pause() else start() }
+        rate = button("1×") {
             speed = when (speed) { 1.0 -> 2.0; 2.0 -> 4.0; 4.0 -> 8.0; else -> 1.0 }
-            speedButton.text = "${speed.toInt()}×"
+            rate.text = "${speed.toInt()}×"
             if (playing) resetClock()
         }
-        val step = button("+1 Frame") { pause(); jumpTo(cursor) }
-        root.addView(row(playButton, speedButton, step))
-        mainHandler.post(ticker)
+        root.addView(row(play, rate, button("+1 Frame") { jumpTo(record) }, height = 45))
+        showTab(0)
+        ui.post(ticker)
     }
-    private lateinit var monitorView: ScrollView
-    private fun switchMode() {
-        radar.visibility = if (monitoring) View.GONE else View.VISIBLE
-        monitorView.visibility = if (monitoring) View.VISIBLE else View.GONE
-        modeButton.text = if (monitoring) "Radar" else "Monitoring"
-        showFrame()
+
+    private fun showTab(index: Int) {
+        tab = index
+        if (!::showViews.isInitialized) return
+        for ((i, view) in showViews.withIndex()) view.visibility = if (i == index) View.VISIBLE else View.GONE
+        for ((i, btn) in tabButtons.withIndex()) btn.alpha = if (i == index) 1f else .69f
+        chartModeButton.visibility = if (index == 4) View.VISIBLE else View.GONE
+        if (index == 1 || index == 2 || index == 3) refreshAnalysisPages()
     }
-    private fun chooseCsv() {
+
+    private fun chooseFile() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
-            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("text/csv", "text/comma-separated-values",
-                "text/plain", "application/octet-stream"))
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("text/csv", "text/plain", "application/octet-stream",
+                "application/vnd.tcpdump.pcap", "application/x-pcapng", "application/x-binary"))
         }
-        startActivityForResult(intent, 70)
+        startActivityForResult(intent, 77)
     }
-    @Deprecated("Used for compatibility back to Android 8 without external AndroidX dependencies")
+
+    @Deprecated("Document picker compatibility on Android API 26+")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != 70 || resultCode != RESULT_OK) return
-        val uri: Uri = data?.data ?: return
+        if (resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        if (requestCode == 78) {
+            val text = pendingReport ?: return
+            worker.execute {
+                try {
+                    contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                        ?: error("Το αρχείο δεν ανοίγει για εγγραφή")
+                    runOnUiThread { info.text = "Το report αποθηκεύτηκε." }
+                } catch (ex: Exception) {
+                    runOnUiThread { info.text = "Σφάλμα αποθήκευσης: ${ex.message}" }
+                }
+            }
+            return
+        }
+        if (requestCode != 77) return
         pause()
-        info.text = "Ανάγνωση AIRCAT CSV..."
         progress.visibility = View.VISIBLE
-        readExecutor.execute {
+        info.text = "Ανάγνωση AIRCAT500 αρχείου..."
+        worker.execute {
             try {
-                val name = uri.lastPathSegment ?: "AIRCAT capture.csv"
-                val imported = contentResolver.openInputStream(uri)?.use { stream ->
-                    AircatCsv.read(InputStreamReader(stream, Charsets.UTF_8), name)
-                } ?: error("Το αρχείο δεν είναι διαθέσιμο")
+                val rawName = android.provider.OpenableColumns.DISPLAY_NAME
+                var filename = uri.lastPathSegment?.substringAfterLast('/') ?: "capture.dat"
+                contentResolver.query(uri, arrayOf(rawName), null, null, null)?.use {
+                    if (it.moveToFirst()) filename = it.getString(0) ?: filename
+                }
+                val ext = filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                val loaded: RadarCapture
+                val sourceNote: String
+                when (ext) {
+                    "bin" -> {
+                        val raw = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                            ?: error("Δεν μπορεί να διαβαστεί το BIN")
+                        require(raw.size <= 60 * 1024 * 1024) { "BIN υπερβαίνει το όριο 60 MB" }
+                        val result = AircatBsc.import(raw, filename)
+                        loaded = result.capture
+                        sourceNote = "BSC CRC: ${result.status.valid} OK / ${result.status.crcFailed} FAIL"
+                    }
+                    "pcap", "pcapng" -> {
+                        val raw = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                            ?: error("Δεν μπορεί να διαβαστεί το PCAP")
+                        require(raw.size <= 60 * 1024 * 1024) { "PCAP υπερβαίνει το όριο 60 MB" }
+                        val result = AircatPcap.import(raw, filename)
+                        loaded = result.capture
+                        sourceNote = "UDP: ${result.udpPackets} / ${result.inspectedPackets} frames"
+                    }
+                    else -> {
+                        loaded = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use {
+                            AircatCsv.read(it, filename)
+                        } ?: error("Το CSV δεν είναι διαθέσιμο")
+                        sourceNote = "CSV CRC-valid payloads"
+                    }
+                }
+                val analysis = AircatAnalysis.analyze(loaded)
                 runOnUiThread {
-                    capture = imported
+                    capture = loaded
+                    diagnostics = analysis
+                    sectorSeconds = ((analysis.medianPeriod ?: 3.956) / 32.0).coerceIn(.02, 5.0)
+                    seek.max = (loaded.packets.size - 1).coerceAtLeast(0)
+                    chart.diagnostics = analysis
+                    refreshAnalysisPages()
                     progress.visibility = View.GONE
-                    seek.max = (imported.packets.size - 1).coerceAtLeast(0)
+                    showTab(0)
                     jumpTo(0)
-                    // Start moving as soon as the real capture is loaded.
-                    play()
+                    start() // Keep v0.2's successful autoplay.
+                    android.widget.Toast.makeText(this, "$sourceNote • ${loaded.summary.packets} frames", android.widget.Toast.LENGTH_LONG).show()
                 }
             } catch (ex: Exception) {
                 runOnUiThread {
                     progress.visibility = View.GONE
-                    info.text = "Σφάλμα CSV: ${ex.message ?: "Άγνωστο σφάλμα"}"
+                    info.text = "Σφάλμα εισαγωγής: ${ex.message ?: "μη έγκυρο αρχείο"}"
                 }
             }
         }
     }
-    private fun pause() { playing = false; playButton.text = "▶ Play" }
+
+    private fun pause() { playing = false; play.text = "▶ Play" }
     private fun resetClock() {
         val packets = capture?.packets ?: return
-        if (cursor >= packets.size) return
-        playAtEpoch = packets[cursor].epochSeconds
-        playAtElapsed = SystemClock.elapsedRealtime()
+        if (record >= packets.size) return
+        startTime = packets[record].epochSeconds
+        clockStart = SystemClock.elapsedRealtime()
     }
-    private fun play() {
-        if (capture == null) return
-        if (cursor >= (capture?.packets?.size ?: 0)) jumpTo(0)
+    private fun start() {
+        val packets = capture?.packets ?: return
+        if (record >= packets.size) jumpTo(0)
         resetClock()
         playing = true
-        playButton.text = "Ⅱ Pause"
+        play.text = "Ⅱ Pause"
     }
-    private fun jumpTo(index: Int) {
+    private fun jumpTo(frame: Int) {
         val packets = capture?.packets ?: return
         pause()
-        cursor = index.coerceIn(0, packets.lastIndex)
-        state.clear()
-        lastSectorEpoch = packets.first().epochSeconds
-        // Rebuild only from recorded targets; do not invent packets.
-        for (i in 0..cursor) {
+        record = frame.coerceIn(0, packets.lastIndex)
+        replay.clear()
+        sectorEpoch = packets.first().epochSeconds
+        for (i in 0..record) {
             val packet = packets[i]
-            state.apply(packet)
-            if (packet.sector != null || packet.kind == 0x19) lastSectorEpoch = packet.epochSeconds
+            replay.apply(packet)
+            if (packet.sector != null || packet.kind == 0x19) sectorEpoch = packet.epochSeconds
         }
-        cursor++
-        updateSweep(packets[cursor - 1].epochSeconds)
-        showFrame()
+        record++
+        updateSweep(packets[record - 1].epochSeconds)
+        refreshFrame()
     }
     private val ticker = object : Runnable {
         override fun run() {
-            val packets = capture?.packets
-            if (playing && packets != null && cursor < packets.size) {
-                val targetEpoch = playAtEpoch +
-                    (SystemClock.elapsedRealtime() - playAtElapsed) * speed / 1000.0
-                var updates = 0
-                while (cursor < packets.size && updates < 300 && packets[cursor].epochSeconds <= targetEpoch) {
-                    val packet = packets[cursor++]
-                    state.apply(packet)
-                    if (packet.sector != null || packet.kind == 0x19) lastSectorEpoch = packet.epochSeconds
-                    updates++
+            try {
+                val packets = capture?.packets
+                if (playing && packets != null && record < packets.size) {
+                    val target = startTime + (SystemClock.elapsedRealtime() - clockStart) * speed / 1000.0
+                    var n = 0
+                    while (record < packets.size && n < 400 && packets[record].epochSeconds <= target) {
+                        val packet = packets[record++]
+                        replay.apply(packet)
+                        if (packet.sector != null || packet.kind == 0x19) sectorEpoch = packet.epochSeconds
+                        n++
+                    }
+                    if (n > 0) refreshFrame()
+                    updateSweep(target)
+                    if (record >= packets.size) pause()
                 }
-                if (updates != 0) showFrame()
-                // Animate between consecutive recorded sectors at ~30 FPS.
-                updateSweep(targetEpoch)
-                if (cursor >= packets.size) pause()
-            }
-            mainHandler.postDelayed(this, 33)
+            } finally { ui.postDelayed(this, 33) }
         }
     }
-    private fun updateSweep(playbackEpoch: Double) {
-        val sector = state.sector ?: 0
-        val ageSeconds = (playbackEpoch - lastSectorEpoch).coerceIn(0.0, sectorSeconds)
-        radar.sweepAzimuthDegrees = ((sector + ageSeconds / sectorSeconds) * 360.0 / 32.0).toFloat()
+    private fun updateSweep(epoch: Double) {
+        val sec = replay.sector ?: 0
+        val elapsed = (epoch - sectorEpoch).coerceIn(0.0, sectorSeconds)
+        radar.sweepAzimuthDegrees = ((sec + elapsed / sectorSeconds) * 11.25).toFloat()
     }
-
-    private fun showFrame() {
+    private fun refreshFrame() {
         val data = capture ?: return
-        val stats = data.summary
-        val frame = data.packets[(cursor - 1).coerceIn(0, data.packets.lastIndex)]
-        if (!changingSeek) seek.progress = (cursor - 1).coerceAtLeast(0)
-        info.text = String.format(Locale.US,
-            "%s  •  %d/%d  •  North %d  •  Sector %s",
-            data.name.substringAfterLast('/'), cursor, stats.packets, state.cycle,
-            state.sector?.toString(16)?.uppercase()?.padStart(2, '0') ?: "--")
-        val crcInfo = stats.crcFailuresDuringCsv?.toString() ?: "δεν υπάρχουν στοιχεία"
-        val framingInfo = stats.framingFailuresDuringCsv?.toString() ?: "δεν υπάρχουν στοιχεία"
-        val header = """
-            PACKETS               ${stats.packets}
-            NORTH                 ${stats.north}
-            RADAR SECTORS         ${stats.sectors}
-            RADAR EXTENSION       ${stats.extension}
-            COMPLETE ROTATIONS    ${stats.completeRotations}
-            PERFECT 32/32         ${stats.rotations32of32}
-            MISSING SECTOR IDs    ${stats.missingSectorIds}
-            DUPLICATE SECTORS     ${stats.duplicateSectors}
-            OUT-OF-ORDER          ${stats.outOfOrder}
-            TRACK RECORDS         ${stats.tracksDecoded}
-            INVALID CSV ROWS      ${stats.invalidRows}
-            USB CRC FAIL DELTA    $crcInfo
-            USB FRAMING DELTA     $framingInfo
-
-            Τα missing sector IDs μετρώνται μόνο μεταξύ δύο NORTH.
-            Δεν αποτελούν απόδειξη απώλειας στη φυσική γραμμή.
-            Τα CRC deltas δεν προκύπτουν από επανέλεγχο του CSV:
-            προέρχονται από snapshots του firmware monitor.
-        """.trimIndent()
-        val line = frame.payload.take(80).joinToString(" ") { "%02X".format(it.toInt() and 255) }
-        monitor.text = "$header\n\nLAST FRAME #${frame.frameNo}  TYPE 0x${"%02X".format(frame.kind)}\n$line"
+        val packet = data.packets[(record - 1).coerceIn(0, data.packets.lastIndex)]
+        if (!changingSeek) seek.progress = (record - 1).coerceAtLeast(0)
+        info.text = "${data.name} • $record/${data.summary.packets} • NORTH ${replay.cycle} • Sector ${replay.sector?.toString(16)?.uppercase(Locale.US)?.padStart(2, '0') ?: "--"}"
+        if (tab == 1) {
+            val hex = packet.payload.take(120).joinToString(" ") { "%02X".format(it.toInt() and 255) }
+            val head = diagnostics?.let {
+                "NORTH ${data.summary.north} • Sector ${data.summary.sectors} • Extension ${data.summary.extension}\n" +
+                    "Cycles ${it.completedCycles} • Valid ${it.validCycles} • Missing IDs ${it.missingTotal}\n" +
+                    "CRC delta ${data.summary.crcFailuresDuringCsv ?: "n/a"} • Framing delta ${data.summary.framingFailuresDuringCsv ?: "n/a"}"
+            } ?: ""
+            monitor.text = "$head\n\nFrame #${packet.frameNo}\nTYPE 0x${"%02X".format(packet.kind)}\n$hex"
+        }
         radar.invalidate()
     }
+
+    private fun refreshAnalysisPages() {
+        val data = capture ?: return
+        val stats = diagnostics ?: return
+        val head = "${data.name}\n${data.summary.packets} frames • ${stats.completedCycles} complete cycles • ${data.summary.tracksDecoded} track elements"
+        monitor.text = "$head\n\n${AircatReport.create(data, stats)}"
+        errors.text = AircatReport.errors(stats)
+        alerts.text = AircatReport.alerts(stats)
+        chart.diagnostics = stats
+    }
+
+    private fun chooseFilters() {
+        val current = currentFilter
+        val items = arrayOf("PSR (Primary)", "MSSR / SSR", "Low quality", "Cancelled tracks",
+            "Ετικέτες στόχων", "Ίχνη τροχιάς", "Μόνο alerts", "Κρύψε invalid Mode A/C")
+        val values = booleanArrayOf(current.showPSR, current.showMSSR, current.showLowQuality,
+            current.showCancelled, current.showLabels, current.showTrails, current.showOnlyAlerts,
+            current.hideInvalidMode)
+        AlertDialog.Builder(this).setTitle("Radar Filters")
+            .setMultiChoiceItems(items, values) { _, index, chosen -> values[index] = chosen }
+            .setPositiveButton("Εφαρμογή") { _, _ ->
+                currentFilter = RadarFilter(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7])
+                radar.filter = currentFilter
+            }.setNegativeButton("Άκυρο", null).show()
+    }
+
+    private fun showTrack(track: RadarTrack) {
+        val details = buildString {
+            appendLine("Track #${track.number} • ${track.kindLabel}")
+            appendLine("X/Y: ${track.xRaw} / ${track.yRaw}  •  Range: %.1f NM".format(Locale.US,track.rangeNm32))
+            appendLine("Mode A: ${track.modeA ?: "n/a"}  •  Mode C: ${track.modeC ?: "n/a"}")
+            appendLine("Quality: ${track.quality ?: "n/a"}  •  Speed: ${track.speedKt ?: "n/a"} kt")
+            appendLine("SPI: ${track.spi}  Emergency: ${track.emergency}")
+            appendLine("Mode A invalid: ${track.modeAInvalid}  Mode C invalid: ${track.modeCInvalid}")
+            appendLine("Time from NORTH: ${track.timeSinceNorthSec ?: "n/a"} seconds")
+            appendLine("Raw: ${track.rawHex}")
+        }
+        AlertDialog.Builder(this).setTitle("Στοιχεία στόχου").setMessage(details)
+            .setPositiveButton("OK", null).show()
+    }
+
+    private fun exportReport() {
+        val data = capture ?: run { info.text = "Άνοιξε πρώτα μια καταγραφή."; return }
+        val stats = diagnostics ?: return
+        pendingReport = AircatReport.create(data,stats) + "\n\n" + AircatReport.errors(stats) + "\n\n" + AircatReport.alerts(stats)
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_Mobile_v1_report.txt")
+        }
+        startActivityForResult(intent, 78)
+    }
+
     override fun onDestroy() {
-        mainHandler.removeCallbacks(ticker)
-        readExecutor.shutdownNow()
+        ui.removeCallbacks(ticker)
+        worker.shutdownNow()
         super.onDestroy()
     }
 }

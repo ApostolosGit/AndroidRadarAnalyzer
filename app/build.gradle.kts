@@ -11,8 +11,8 @@ android {
         applicationId = "gr.aircat.androidradaranalyzer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "1.0.0"
     }
 
     compileOptions {
@@ -21,5 +21,6 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 }
+
 
 dependencies { testImplementation("junit:junit:4.13.2") }
