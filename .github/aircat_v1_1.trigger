@@ -1,0 +1,1 @@
+Build AIRCAT500 Mobile v1.1.0 light-gray radar (#EAEDF0). Verify the SHA-256 patch, then build tests and APK.
