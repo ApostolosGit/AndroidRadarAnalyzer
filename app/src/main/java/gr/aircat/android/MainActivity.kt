@@ -438,23 +438,112 @@ class MainActivity : Activity() {
 
     private fun chooseFilters() {
         val current = currentFilter
-        val items = arrayOf("PSR (Primary)", "MSSR / SSR", "Low quality", "Cancelled tracks",
-            "Ετικέτες στόχων", "Ίχνη τροχιάς", "Μόνο alerts", "Κρύψε invalid Mode A/C")
-        val values = booleanArrayOf(current.showPSR, current.showMSSR, current.showLowQuality,
-            current.showCancelled, current.showLabels, current.showTrails, current.showOnlyAlerts,
-            current.hideInvalidMode)
+        val outer = ScrollView(this)
+        val settings = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(6))
+        }
+        outer.addView(settings)
+        fun check(label: String, enabled: Boolean): CheckBox = CheckBox(this).apply {
+            text = label
+            textSize = 13f
+            isChecked = enabled
+            setTextColor(fg)
+            settings.addView(this)
+        }
+        val psr = check("PSR (Primary)",current.showPSR)
+        val mssr = check("MSSR / SSR / Combined",current.showMSSR)
+        val low = check("Low quality",current.showLowQuality)
+        val cancelled = check("Cancelled tracks",current.showCancelled)
+        val labels = check("Mode A/C labels (όλοι οι στόχοι)",current.showLabels)
+        val trails = check("Ίχνη τροχιάς",current.showTrails)
+        val onlyAlerts = check("Μόνο alerts",current.showOnlyAlerts)
+        val invalid = check("Κρύψε invalid Mode A/C",current.hideInvalidMode)
+
+        val trailLabel = title("Ιστορικό ίχνους: " + radar.trailHistoryLength + " σημεία",12f)
+        settings.addView(trailLabel)
+        val trailSeek = SeekBar(this).apply {
+            max = 63
+            progress = radar.trailHistoryLength - 1
+            isEnabled = trails.isChecked
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, value: Int, user: Boolean) {
+                    trailLabel.text = "Ιστορικό ίχνους: " + (value+1) + " σημεία"
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+        }
+        settings.addView(trailSeek)
+        trails.setOnCheckedChangeListener { _, active -> trailSeek.isEnabled = active }
+
+        settings.addView(title("Φίλτρα αριθμητικών τιμών (κενό = χωρίς όριο)",12f))
+        fun numeric(label: String, value: Number?, signed: Boolean = false, decimal: Boolean = false): EditText {
+            settings.addView(title(label,11f))
+            return EditText(this).apply {
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER or
+                    (if (signed) android.text.InputType.TYPE_NUMBER_FLAG_SIGNED else 0) or
+                    (if (decimal) android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL else 0)
+                textSize = 13f
+                maxLines = 1
+                hint = "χωρίς όριο"
+                value?.let { setText(it.toString()) }
+                settings.addView(this)
+            }
+        }
+        val minAlt = numeric("Ελάχιστο ύψος Mode C (ft)",current.minAltitudeFt,true)
+        val maxAlt = numeric("Μέγιστο ύψος Mode C (ft)",current.maxAltitudeFt,true)
+        val minSpeed = numeric("Ελάχιστη ταχύτητα (kt)",current.minSpeedKt)
+        val maxSpeed = numeric("Μέγιστη ταχύτητα (kt)",current.maxSpeedKt)
+        val minRange = numeric("Ελάχιστη απόσταση (NM) — προαιρετικό",current.minRangeNm,false,true)
+        val maxRange = numeric("Μέγιστη απόσταση (NM) — προαιρετικό",current.maxRangeNm,false,true)
+        settings.addView(title("Αν υπάρχει όριο, στόχοι χωρίς γνωστή αντίστοιχη τιμή δεν εμφανίζονται.",10f))
+        fun raw(e: EditText) = e.text.toString().trim()
         AlertDialog.Builder(this).setTitle("Radar Filters")
-            .setMultiChoiceItems(items, values) { _, index, chosen -> values[index] = chosen }
+            .setView(outer)
             .setPositiveButton("Εφαρμογή") { _, _ ->
-                currentFilter = RadarFilter(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7])
+                val fields = listOf(minAlt,maxAlt,minSpeed,maxSpeed)
+                val rangeFields = listOf(minRange,maxRange)
+                if (fields.any { raw(it).isNotEmpty() && raw(it).toIntOrNull() == null } ||
+                    rangeFields.any { raw(it).isNotEmpty() && raw(it).toDoubleOrNull() == null }) {
+                    android.widget.Toast.makeText(this,"Μη έγκυρη αριθμητική τιμή",android.widget.Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                fun optionalInt(e: EditText) = raw(e).toIntOrNull()
+                fun optionalDouble(e: EditText) = raw(e).toDoubleOrNull()
+                val aMin=optionalInt(minAlt)
+                val aMax=optionalInt(maxAlt)
+                val sMin=optionalInt(minSpeed)
+                val sMax=optionalInt(maxSpeed)
+                val rMin=optionalDouble(minRange)
+                val rMax=optionalDouble(maxRange)
+                if ((aMin!=null && aMax!=null && aMin>aMax) ||
+                    (sMin!=null && sMax!=null && sMin>sMax) ||
+                    (rMin!=null && rMax!=null && rMin>rMax)) {
+                    android.widget.Toast.makeText(this,"Το ελάχιστο πρέπει να είναι ≤ του μέγιστου",android.widget.Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                currentFilter = RadarFilter(
+                    showPSR=psr.isChecked, showMSSR=mssr.isChecked,
+                    showLowQuality=low.isChecked,showCancelled=cancelled.isChecked,
+                    showLabels=labels.isChecked,showTrails=trails.isChecked,
+                    showOnlyAlerts=onlyAlerts.isChecked,hideInvalidMode=invalid.isChecked,
+                    minAltitudeFt=aMin,maxAltitudeFt=aMax,
+                    minSpeedKt=sMin,maxSpeedKt=sMax,
+                    minRangeNm=rMin,maxRangeNm=rMax
+                )
+                radar.trailHistoryLength = trailSeek.progress + 1
                 radar.filter = currentFilter
-            }.setNegativeButton("Άκυρο", null).show()
+                radar.invalidate()
+            }
+            .setNegativeButton("Άκυρο",null)
+            .show()
     }
 
     private fun showTrack(track: RadarTrack) {
         val details = buildString {
             appendLine("Track #${track.number} • ${track.kindLabel}")
-            appendLine("X/Y: ${track.xRaw} / ${track.yRaw}  •  Range: %.1f NM".format(Locale.US,track.rangeNm32))
+            appendLine("X/Y: ${track.xRaw} / ${track.yRaw}")
             appendLine("Mode A: ${track.modeA ?: "n/a"}  •  Mode C: ${track.modeC ?: "n/a"}")
             appendLine("Quality: ${track.quality ?: "n/a"}  •  Speed: ${track.speedKt ?: "n/a"} kt")
             appendLine("SPI: ${track.spi}  Emergency: ${track.emergency}")
