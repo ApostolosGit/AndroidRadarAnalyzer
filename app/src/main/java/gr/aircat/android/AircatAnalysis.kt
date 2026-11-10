@@ -21,8 +21,8 @@ data class RadarFilter(
         (showCancelled || !track.cancelled) &&
         (!showOnlyAlerts || track.alert) &&
         (!hideInvalidMode || !(track.modeAInvalid || track.modeCInvalid)) &&
-        (minAltitudeFt == null || (track.altitudeFt != null && track.altitudeFt >= minAltitudeFt)) &&
-        (maxAltitudeFt == null || (track.altitudeFt != null && track.altitudeFt <= maxAltitudeFt)) &&
+        (minAltitudeFt == null || (track.altitudeFt?.let { it >= minAltitudeFt } == true)) &&
+        (maxAltitudeFt == null || (track.altitudeFt?.let { it <= maxAltitudeFt } == true)) &&
         (minSpeedKt == null || (track.speedKt != null && track.speedKt >= minSpeedKt)) &&
         (maxSpeedKt == null || (track.speedKt != null && track.speedKt <= maxSpeedKt)) &&
         (minRangeNm == null || track.rangeNm32 >= minRangeNm) &&
