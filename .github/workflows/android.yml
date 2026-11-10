@@ -1,0 +1,60 @@
+name: Aircat500_Analyzer Mobile v1.2 APK
+on:
+  push:
+    branches: [feature/mobile-v1-2-aviation-blue-ppi]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  android-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Verify and apply v1.2 changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f .github/aircat_v1_2.trigger ]; then
+            test "$(find .github/v12parts -name 'part-*.b64' | wc -l)" -eq 4
+            cat .github/v12parts/part-*.b64 | base64 --decode > /tmp/aircat-v12.patch.xz
+            echo 'a46979e66b18610f11939c5b534cb15e9fd9f90294ff02de26242f5f2b221201  /tmp/aircat-v12.patch.xz' | sha256sum --check
+            xz --decompress --stdout /tmp/aircat-v12.patch.xz | patch --batch --fuzz=0 -p1
+            # Regression fixture has two valid sectors 00 and 01 (30 missing of 32).
+            sed -i 's/assertEquals("31",rows.first { it.name=="Sector missing συνολικά" }.value)/assertEquals("30",rows.first { it.name=="Sector missing συνολικά" }.value)/' app/src/test/java/gr/aircat/android/AircatV12Test.kt
+            grep -q 'assertEquals("30",rows.first' app/src/test/java/gr/aircat/android/AircatV12Test.kt
+            rm .github/aircat_v1_2.trigger
+            rm -rf .github/v12parts
+          fi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4
+      - name: Install Android SDK 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Unit tests and APK
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon
+      - name: Publish validated readable v1.2 sources
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/mobile-v1-2-aviation-blue-ppi'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A README.md README_V1_2_CHANGES_GR.txt OfflineRegressionV12.kt app .github/v12parts .github/aircat_v1_2.trigger
+            git commit -m "Aircat500_Analyzer v1.2: aviation-blue PPI, summaries, zoom-peak charts and trails"
+            git push origin HEAD:feature/mobile-v1-2-aviation-blue-ppi
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Aircat500_Analyzer-Mobile-v1-2-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
