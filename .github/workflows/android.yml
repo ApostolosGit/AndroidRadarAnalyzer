@@ -2,7 +2,6 @@ name: Aircat500_Analyzer Mobile v1.2 APK
 on:
   push:
     branches: [feature/mobile-v1-2-aviation-blue-ppi]
-    paths: [.github/aircat_v1_2.trigger]
   pull_request:
     branches: [main]
   workflow_dispatch:
