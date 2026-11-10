@@ -141,6 +141,8 @@ class RadarView(context: Context) : View(context) {
         if (ox in 0f..width.toFloat()) canvas.drawText("N", ox+dp(3f), dp(14f), paint)
         val current = state ?: return
         val bearing = if (sweepAzimuthDegrees.isNaN()) (current.sector ?: 0) * 11.25f else sweepAzimuthDegrees
+        val cross = max(width.toFloat(),height.toFloat()) * 1.5f +
+            hypot(panX.toDouble(),panY.toDouble()).toFloat()
         canvas.drawArc(RectF(ox-cross, oy-cross, ox+cross, oy+cross),
             bearing - 90f, 11.25f, true, sectorShade)
         val radians = Math.toRadians((bearing-90f).toDouble())
@@ -235,7 +237,7 @@ class RadarView(context: Context) : View(context) {
         paint.style = Paint.Style.FILL
         paint.color = foreground
         paint.textSize = sp(10f)
-        canvas.drawText("${tracks.size} targets  •  Scan ${current.cycle}  •  Sector ${current.sector?.toString(16)?.uppercase()?.padStart(2,'0') ?: "--"}   ${if (zoom > 1f) "Zoom %.1f×".format(zoom) else "250 NM"}",
+        canvas.drawText("${tracks.size} targets  •  Scan ${current.cycle}  •  Sector ${current.sector?.toString(16)?.uppercase()?.padStart(2,'0') ?: "--"}   ${"%.1f NM".format(250f / zoom)}",
             dp(8f), height-dp(12f), paint)
     }
 
