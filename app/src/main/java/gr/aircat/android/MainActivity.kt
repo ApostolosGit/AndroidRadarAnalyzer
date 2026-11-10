@@ -285,7 +285,16 @@ class MainActivity : Activity() {
                     }
                 }
                 val analysis = AircatAnalysis.analyze(loaded)
+                // Build sparse seek checkpoints in background, not on the UI thread.
+                // Each checkpoint preserves current targets and historical trails.
+                val checkpoints = HashMap<Int, RadarReplayState.Snapshot>()
+                val scratch = RadarReplayState()
+                for (i in loaded.packets.indices) {
+                    scratch.apply(loaded.packets[i])
+                    if (i % checkpointStep == 0) checkpoints[i] = scratch.snapshot()
+                }
                 runOnUiThread {
+                    replayCheckpoints = checkpoints
                     capture = loaded
                     diagnostics = analysis
                     sectorSeconds = ((analysis.medianPeriod ?: 3.956) / 32.0).coerceIn(.02, 5.0)
@@ -307,55 +316,89 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun pause() { playing = false; play.text = "▶ Play" }
+    private fun pause() {
+        // A pause freezes the existing radar state and antenna angle; it does
+        // not erase tracks, symbols, labels or trails.
+        playing = false
+        play.text = "▶ Play"
+    }
+
     private fun resetClock() {
-        val packets = capture?.packets ?: return
-        if (record >= packets.size) return
-        startTime = packets[record].epochSeconds
+        val frames = capture?.packets ?: return
+        if (frames.isEmpty()) return
+        startTime = frames[(record-1).coerceIn(0, frames.lastIndex)].epochSeconds
         clockStart = SystemClock.elapsedRealtime()
     }
+
+    private fun chooseDirection(next: Int) {
+        playbackDirection = if (next < 0) -1 else 1
+        start()
+    }
+
     private fun start() {
-        val packets = capture?.packets ?: return
-        if (record >= packets.size) jumpTo(0)
+        val frames = capture?.packets ?: return
+        if (frames.isEmpty()) return
+        // The selected direction determines the restart boundary.
+        if (playbackDirection > 0 && record >= frames.size) jumpTo(0)
+        if (playbackDirection < 0 && record <= 1) jumpTo(frames.lastIndex)
         resetClock()
         playing = true
-        play.text = "Ⅱ Pause"
+        play.text = if (playbackDirection < 0) "Ⅱ ◀ Pause" else "Ⅱ Pause"
     }
-    private fun jumpTo(frame: Int) {
-        val packets = capture?.packets ?: return
-        pause()
-        record = frame.coerceIn(0, packets.lastIndex)
-        replay.clear()
-        sectorEpoch = packets.first().epochSeconds
-        for (i in 0..record) {
-            val packet = packets[i]
-            replay.apply(packet)
-            if (packet.sector != null || packet.kind == 0x19) sectorEpoch = packet.epochSeconds
+
+    private fun jumpTo(frame: Int, preservePlayback: Boolean = false) {
+        val frames = capture?.packets ?: return
+        if (frames.isEmpty()) return
+        if (!preservePlayback) pause()
+        val desired = frame.coerceIn(0, frames.lastIndex)
+        val checkpoint = (desired / checkpointStep) * checkpointStep
+        val snapshot = replayCheckpoints[checkpoint]
+        val firstApply: Int
+        if (snapshot != null) {
+            replay.restore(snapshot)
+            firstApply = checkpoint + 1
+        } else {
+            replay.clear()
+            firstApply = 0
         }
-        record++
-        updateSweep(packets[record - 1].epochSeconds)
+        if (firstApply <= desired) for (i in firstApply..desired) replay.apply(frames[i])
+        record = desired + 1
+        sectorEpoch = frames.first().epochSeconds
+        for (i in desired downTo 0) {
+            val packet = frames[i]
+            if (packet.sector != null || packet.kind == 0x19) {
+                sectorEpoch = packet.epochSeconds
+                break
+            }
+        }
+        updateSweep(frames[desired].epochSeconds)
         refreshFrame()
     }
+
     private val ticker = object : Runnable {
         override fun run() {
             try {
-                val packets = capture?.packets
-                if (playing && packets != null && record < packets.size) {
-                    val target = startTime + (SystemClock.elapsedRealtime() - clockStart) * speed / 1000.0
-                    var n = 0
-                    while (record < packets.size && n < 400 && packets[record].epochSeconds <= target) {
-                        val packet = packets[record++]
-                        replay.apply(packet)
-                        if (packet.sector != null || packet.kind == 0x19) sectorEpoch = packet.epochSeconds
-                        n++
-                    }
-                    if (n > 0) refreshFrame()
-                    updateSweep(target)
-                    if (record >= packets.size) pause()
+                val frames = capture?.packets
+                if (playing && frames != null && frames.isNotEmpty()) {
+                    val elapsed = (SystemClock.elapsedRealtime() - clockStart) * speed / 1000.0
+                    val targetTime = startTime + elapsed * playbackDirection
+                    val desired = ReplayTimeline.frameAt(frames, targetTime)
+                    if (desired != record-1) jumpTo(desired, preservePlayback = true)
+                    updateSweep(targetTime.coerceIn(frames.first().epochSeconds, frames.last().epochSeconds))
+                    if ((playbackDirection > 0 && targetTime >= frames.last().epochSeconds) ||
+                        (playbackDirection < 0 && targetTime <= frames.first().epochSeconds)) pause()
                 }
-            } finally { ui.postDelayed(this, 33) }
+            } finally {
+                ui.postDelayed(this, 33)
+            }
         }
     }
+
+    private fun formatElapsed(elapsed: Double): String {
+        val t = maxOf(0L, elapsed.toLong())
+        return String.format(Locale.US, "%02d:%02d:%02d",t/3600, (t/60)%60, t%60)
+    }
+
     private fun updateSweep(epoch: Double) {
         val sec = replay.sector ?: 0
         val elapsed = (epoch - sectorEpoch).coerceIn(0.0, sectorSeconds)
@@ -365,7 +408,12 @@ class MainActivity : Activity() {
         val data = capture ?: return
         val packet = data.packets[(record - 1).coerceIn(0, data.packets.lastIndex)]
         if (!changingSeek) seek.progress = (record - 1).coerceAtLeast(0)
-        info.text = "${data.name} • $record/${data.summary.packets} • NORTH ${replay.cycle} • Sector ${replay.sector?.toString(16)?.uppercase(Locale.US)?.padStart(2, '0') ?: "--"}"
+        info.text = data.name + " • " + record + "/" + data.summary.packets +
+            " • NORTH " + replay.cycle + " • Sector " +
+            (replay.sector?.toString(16)?.uppercase(Locale.US)?.padStart(2,'0') ?: "--")
+        timelineLabel.text = formatElapsed(packet.epochSeconds - data.packets.first().epochSeconds) +
+            " / " + formatElapsed(data.packets.last().epochSeconds - data.packets.first().epochSeconds) +
+            "   " + (if (playbackDirection < 0) "<<" else ">>") + " " + speed.toInt() + "×"
         if (tab == 1) {
             val hex = packet.payload.take(120).joinToString(" ") { "%02X".format(it.toInt() and 255) }
             val head = diagnostics?.let {
