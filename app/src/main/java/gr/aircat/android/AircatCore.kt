@@ -21,6 +21,14 @@ data class RadarTrack(
     val rawHex: String = ""
 ) {
     val rangeNm32: Double get() = hypot(xRaw.toDouble(), yRaw.toDouble()) / 32.0
+    /** Mode C is decoded by the AIRCAT parser into e.g. 12300ft or -1200ft;
+     * hex/invalid or unavailable values are never silently treated as zero. */
+    val altitudeFt: Int? get() = modeC
+        ?.replace(",", "")
+        ?.trim()
+        ?.removeSuffix("ft")
+        ?.trim()
+        ?.toIntOrNull()
     val isLowQuality: Boolean get() = quality?.let { if (primary) it <= 3 else it < 95 } ?: false
     val specialModeAlert: String? get() = when (modeA) {
         "7500" -> "7500 HIJACK"
@@ -289,10 +297,29 @@ object AircatCsv {
 class RadarReplayState {
     val tracksBySector = HashMap<Int, List<RadarTrack>>()
     val trackTrail = HashMap<Int, ArrayDeque<RadarTrack>>()
-    var trailDepth = 6
+    // Retain enough history for any selected on-screen depth (default rendered: 16).
+    var trailDepth = 64
     var sector: Int? = null
     var cycle = 0
     var packetsShown = 0
+    data class Snapshot(
+        val tracks: Map<Int, List<RadarTrack>>,
+        val trails: Map<Int, List<RadarTrack>>,
+        val sector: Int?, val cycle: Int, val packetsShown: Int
+    )
+    fun snapshot(): Snapshot = Snapshot(
+        tracksBySector.mapValues { it.value.toList() },
+        trackTrail.mapValues { it.value.toList() },
+        sector, cycle, packetsShown
+    )
+    fun restore(snapshot: Snapshot) {
+        clear()
+        for ((sectorId, contents) in snapshot.tracks) tracksBySector[sectorId] = contents.toList()
+        for ((trackId, history) in snapshot.trails) trackTrail[trackId] = ArrayDeque(history)
+        sector = snapshot.sector
+        cycle = snapshot.cycle
+        packetsShown = snapshot.packetsShown
+    }
     fun clear() {
         tracksBySector.clear(); trackTrail.clear(); sector = null; cycle = 0; packetsShown = 0
     }
@@ -332,4 +359,20 @@ class RadarReplayState {
         }
     }
     fun allTracks(): List<RadarTrack> = tracksBySector.values.flatten()
+}
+
+/** Maps a recorded clock position to the last actual frame at or before that time.
+ * The same function is used for forward and reverse playback, with no invented frames. */
+object ReplayTimeline {
+    fun frameAt(packets: List<RadarPacket>, epochSeconds: Double): Int {
+        if (packets.isEmpty()) return 0
+        var left = 0
+        var right = packets.size
+        while (left < right) {
+            val middle = (left + right) ushr 1
+            if (packets[middle].epochSeconds <= epochSeconds) left = middle + 1
+            else right = middle
+        }
+        return (left - 1).coerceIn(0, packets.lastIndex)
+    }
 }
