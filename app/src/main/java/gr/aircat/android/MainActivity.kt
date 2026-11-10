@@ -13,6 +13,9 @@ import android.os.SystemClock
 import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
+import android.widget.InputType
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -32,6 +35,9 @@ class MainActivity : Activity() {
     private var record = 0
     private var playing = false
     private var speed = 1.0
+    private var playbackDirection = 1 // -1 backward, +1 forward
+    private val checkpointStep = 128
+    private var replayCheckpoints: Map<Int, RadarReplayState.Snapshot> = emptyMap()
     private var startTime = 0.0
     private var clockStart = 0L
     private var sectorEpoch = 0.0
@@ -50,6 +56,9 @@ class MainActivity : Activity() {
     private lateinit var chart: ChartView
     private lateinit var progress: ProgressBar
     private lateinit var seek: SeekBar
+    private lateinit var timelineLabel: TextView
+    private lateinit var reverse: Button
+    private lateinit var forward: Button
     private lateinit var play: Button
     private lateinit var rate: Button
     private lateinit var chartModeButton: Button
@@ -106,7 +115,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v1.0", 17f))
+        root.addView(title("AIRCAT500 Mobile  v1.1", 17f))
         val open = button("Άνοιγμα", 11f) { chooseFile() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 11f) { exportReport() }
@@ -145,13 +154,26 @@ class MainActivity : Activity() {
             chartModeButton.text = listOf("SECTOR PACKETS  ▾", "MISSING SECTORS  ▾", "AIRCAT TYPES  ▾", "ALERTS  ▾")[chartMode]
         }
         root.addView(chartModeButton, LinearLayout.LayoutParams(-1, dp(35)))
+        timelineLabel = title("Replay: 00:00 / 00:00", 11f)
+        root.addView(timelineLabel)
         seek = SeekBar(this).apply {
             max = 0
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(bar: SeekBar?, index: Int, fromUser: Boolean) {
-                    if (fromUser) { changingSeek = true; info.text = "Εγγραφή ${index + 1} / ${capture?.packets?.size ?: 0}" }
+                    if (fromUser) {
+                        changingSeek = true
+                        val packets = capture?.packets
+                        if (packets != null && packets.isNotEmpty()) {
+                            timelineLabel.text = formatElapsed(packets[index.coerceIn(0,packets.lastIndex)].epochSeconds -
+                                packets.first().epochSeconds) + " / " +
+                                formatElapsed(packets.last().epochSeconds-packets.first().epochSeconds)
+                        }
+                    }
                 }
-                override fun onStartTrackingTouch(bar: SeekBar?) { changingSeek = true }
+                override fun onStartTrackingTouch(bar: SeekBar?) {
+                    changingSeek = true
+                    pause() // Seeking stops movement; displayed targets remain in memory.
+                }
                 override fun onStopTrackingTouch(bar: SeekBar?) {
                     changingSeek = false
                     jumpTo(seek.progress)
@@ -159,13 +181,27 @@ class MainActivity : Activity() {
             })
         }
         root.addView(seek)
+        reverse = button("<<") { chooseDirection(-1) }
         play = button("▶ Play") { if (playing) pause() else start() }
+        forward = button(">>") { chooseDirection(1) }
         rate = button("1×") {
-            speed = when (speed) { 1.0 -> 2.0; 2.0 -> 4.0; 4.0 -> 8.0; else -> 1.0 }
-            rate.text = "${speed.toInt()}×"
+            speed = when (speed) {
+                1.0 -> 2.0
+                2.0 -> 4.0
+                4.0 -> 8.0
+                8.0 -> 16.0
+                else -> 1.0
+            }
+            rate.text = speed.toInt().toString() + "×"
             if (playing) resetClock()
         }
-        root.addView(row(play, rate, button("+1 Frame") { jumpTo(record) }, height = 45))
+        root.addView(row(reverse, play, forward, rate, height = 45))
+        root.addView(row(
+            button("-1 Frame") { jumpTo((record-2).coerceAtLeast(0)) },
+            button("+1 Frame") { jumpTo(record) },
+            button("20 NM / Reset") { radar.resetViewport() },
+            height = 38
+        ))
         showTab(0)
         ui.post(ticker)
     }
