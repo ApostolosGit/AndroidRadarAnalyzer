@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -12,15 +13,17 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
+import kotlin.math.max
 import kotlin.math.sin
 
 /** v1.0 high-contrast native Android radar; smooth sweep, alerts, trails, pan/zoom, tap target. */
 class RadarView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val sectorShade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(47, 86, 201, 139) }
-    private val background = Color.rgb(10, 21, 29)
-    private val foreground = Color.rgb(147, 184, 194)
-    private val ringColor = Color.rgb(48, 78, 90)
+    private val sectorShade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(33, 155, 57, 61) }
+    private val background = Color.rgb(235, 237, 239)
+    private val foreground = Color.rgb(39, 43, 47)
+    private val ringColor = Color.rgb(162, 45, 51)
+    private val ringMinor = Color.rgb(211, 148, 152)
     var state: RadarReplayState? = null
         set(value) { field = value; invalidate() }
     var filter: RadarFilter = RadarFilter()
@@ -29,10 +32,11 @@ class RadarView(context: Context) : View(context) {
         set(value) { field = value; invalidate() }
     var coordinateDivisor = 32.0
         set(value) { field = value; invalidate() }
-    var zoom = 1f
-        set(value) { field = value.coerceIn(1f, 12f); invalidate() }
-    var showTrails = true
-        set(value) { field = value; invalidate() }
+    // At 12.5x the reference radar radius shows 20 NM.
+    var zoom = 12.5f
+        set(value) { field = value.coerceIn(.2f, 125f); invalidate() }
+    var trailHistoryLength = 16
+        set(value) { field = value.coerceIn(1, 64); invalidate() }
     var onTrackTap: ((RadarTrack) -> Unit)? = null
     var selectedTrackNumber: Int? = null
         set(value) { field = value; invalidate() }
@@ -44,7 +48,12 @@ class RadarView(context: Context) : View(context) {
     private val hitPoints = ArrayList<Pair<RadarTrack, Pair<Float, Float>>>()
     private val pinch = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
+            val before = zoom
             zoom *= detector.scaleFactor
+            val factor = zoom / before
+            panX = detector.focusX - width / 2f - (detector.focusX - width / 2f - panX) * factor
+            panY = detector.focusY - height / 2f - (detector.focusY - height / 2f - panY) * factor
+            invalidate()
             return true
         }
     })
@@ -52,7 +61,7 @@ class RadarView(context: Context) : View(context) {
     private fun sp(n: Float) = n * resources.displayMetrics.scaledDensity
     private fun color(hex: String) = Color.parseColor(hex)
 
-    fun resetViewport() { panX = 0f; panY = 0f; zoom = 1f; invalidate() }
+    fun resetViewport() { panX = 0f; panY = 0f; zoom = 12.5f; invalidate() }
     private fun pointFor(track: RadarTrack, cx: Float, cy: Float, radius: Float): Pair<Float, Float> {
         val range = 250.0 * coordinateDivisor
         return Pair(cx + panX + ((track.xRaw.toDouble() / range) * radius * zoom).toFloat(),
@@ -67,27 +76,69 @@ class RadarView(context: Context) : View(context) {
         val radius = min(width * 0.455f, (height - dp(34f)) * 0.46f)
         val ox = cx + panX
         val oy = cy + panY
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = dp(.8f)
-        paint.color = ringColor
-        for (nm in listOf(60, 120, 180, 250)) {
-            canvas.drawCircle(ox, oy, radius * (nm / 250f) * zoom, paint)
+        val pxPerNm = radius * zoom / 250f
+        val visibleRangeNm = 250f / zoom
+        val ringStep = when {
+            visibleRangeNm <= 30f -> 5
+            visibleRangeNm <= 70f -> 10
+            visibleRangeNm <= 150f -> 20
+            visibleRangeNm <= 400f -> 25
+            else -> 50
         }
-        val cross = radius * zoom
-        canvas.drawLine(ox - cross, oy, ox + cross, oy, paint)
-        canvas.drawLine(ox, oy - cross, ox, oy + cross, paint)
-        paint.style = Paint.Style.FILL
-        paint.color = foreground
-        paint.textSize = sp(12f)
-        canvas.drawText("N", ox - dp(5f), oy - cross - dp(8f), paint)
-        canvas.drawText("E", ox + cross + dp(5f), oy + dp(4f), paint)
-        if (zoom <= 2f) {
-            paint.textSize = sp(9f)
-            for (nm in listOf(60, 120, 180, 250)) {
-                val x = ox + radius * (nm/250f) * zoom
-                if (x + dp(12f) < width) canvas.drawText("$nm", x + dp(3f), oy-dp(4f), paint)
+        val majorEvery = when {
+            ringStep <= 5 -> 10
+            ringStep <= 10 -> 20
+            ringStep <= 25 -> 50
+            else -> 100
+        }
+        // Use one world scale for targets and rings. Draw beyond 250NM if a ring
+        // intersects the viewport after pan/zoom; never crop at the centre disc.
+        val farCorner = max(
+            max(hypot(ox.toDouble(), oy.toDouble()), hypot((width-ox).toDouble(), oy.toDouble())),
+            max(hypot(ox.toDouble(), (height-oy).toDouble()),
+                hypot((width-ox).toDouble(), (height-oy).toDouble()))
+        )
+        val ringLimit = min(500, (farCorner / pxPerNm / ringStep).toInt() + 1)
+        for (ringIndex in 1..ringLimit) {
+            val nm = ringIndex * ringStep
+            val isMajor = nm % majorEvery == 0
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = dp(if (isMajor) 1.3f else 0.75f)
+            paint.color = if (isMajor) ringColor else ringMinor
+            val rr = pxPerNm * nm
+            canvas.drawCircle(ox, oy, rr, paint)
+            if (isMajor) {
+                // Pick a label position on the visible arc, even with origin offscreen.
+                var bestScore = Float.POSITIVE_INFINITY
+                var bestX = 0f
+                var bestY = 0f
+                for (sample in 0..95) {
+                    val angle = sample * (Math.PI * 2.0 / 96.0)
+                    val x = ox + (rr * cos(angle)).toFloat()
+                    val y = oy + (rr * sin(angle)).toFloat()
+                    if (x < dp(15f) || x > width-dp(55f) ||
+                        y < dp(12f) || y > height-dp(18f)) continue
+                    val score = abs(x-width*.72f) + abs(y-height*.38f)
+                    if (score < bestScore) { bestScore=score; bestX=x; bestY=y }
+                }
+                if (bestScore.isFinite()) {
+                    paint.style = Paint.Style.FILL
+                    paint.textSize = sp(9f)
+                    paint.color = ringColor
+                    canvas.drawText(nm.toString()+" NM", bestX+dp(2f), bestY-dp(2f), paint)
+                }
             }
         }
+        // Axes extend across the screen, rather than stopping at the 250NM ring.
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = dp(.6f)
+        paint.color = Color.rgb(156, 159, 161)
+        if (oy >= 0f && oy <= height) canvas.drawLine(0f,oy,width.toFloat(),oy,paint)
+        if (ox >= 0f && ox <= width) canvas.drawLine(ox,0f,ox,height.toFloat(),paint)
+        paint.style = Paint.Style.FILL
+        paint.color = foreground
+        paint.textSize = sp(11f)
+        if (ox in 0f..width.toFloat()) canvas.drawText("N", ox+dp(3f), dp(14f), paint)
         val current = state ?: return
         val bearing = if (sweepAzimuthDegrees.isNaN()) (current.sector ?: 0) * 11.25f else sweepAzimuthDegrees
         canvas.drawArc(RectF(ox-cross, oy-cross, ox+cross, oy+cross),
