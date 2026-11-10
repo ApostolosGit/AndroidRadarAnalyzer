@@ -1,0 +1,1 @@
+Apply verified v1.2 patch; expected sha256 a46979e66b18610f11939c5b534cb15e9fd9f90294ff02de26242f5f2b221201
