@@ -180,11 +180,14 @@ class MainActivity : Activity() {
     }
 
     private fun chooseFile() {
+        // CSV MIME types differ between Android devices and file providers.
+        // A provider-side EXTRA_MIME_TYPES whitelist can disable valid CSVs.
+        // Open all documents and dispatch by the selected file extension
+        // (CSV / BIN / PCAP / PCAPNG) in the existing onActivityResult handler.
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
-            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("text/csv", "text/plain", "application/octet-stream",
-                "application/vnd.tcpdump.pcap", "application/x-pcapng", "application/x-binary"))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         startActivityForResult(intent, 77)
     }
