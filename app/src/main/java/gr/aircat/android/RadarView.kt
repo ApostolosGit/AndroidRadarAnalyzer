@@ -18,12 +18,12 @@ import kotlin.math.sin
 /** Light-gray radar, black MSSR(Δ) / combined(U) / PSR(○) symbols; desktop AIRCAT labels. */
 class RadarView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val bgColor = Color.rgb(234, 237, 239)
+    private val bgColor = Color.rgb(200, 207, 214) // deeper PPI gray
     private val black = Color.rgb(12, 12, 12)
-    private val gridColor = Color.rgb(164, 173, 180)
-    private val lightGray = Color.rgb(125, 131, 135)
-    private val sectorShade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(26, 72, 83, 92) }
-    private val labelBackground = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(242, 234, 237, 239) }
+    private val gridColor = Color.rgb(131, 147, 160)
+    private val lightGray = Color.rgb(50, 98, 138)
+    private val sectorShade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(24, 18, 83, 139) }
+    private val labelBackground = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(242, 227, 233, 238) }
     private val triangle = Path()
     private val uPath = Path()
 
@@ -55,6 +55,7 @@ class RadarView(context: Context) : View(context) {
             return true
         }
     })
+    val maxVisibleRangeNm: Double get() = PpiScale.maxRange(zoom)
     private fun dp(n: Float) = n * resources.displayMetrics.density
     private fun sp(n: Float) = n * resources.displayMetrics.scaledDensity
 
@@ -160,52 +161,71 @@ class RadarView(context: Context) : View(context) {
         val radius = min(width * .455f, (height - dp(50f)) * .45f).coerceAtLeast(1f)
         val ox = cx + panX
         val oy = cy + panY
+        // Range rings express physical distance in NM, not arbitrary zoom factors.
+        // The outer PPI rim corresponds to 250 NM / zoom.
+        val maxNm = maxVisibleRangeNm
+        val nmRings = PpiScale.rings(maxNm)
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = dp(.85f)
         paint.color = gridColor
-        for (nm in listOf(60,120,180,250))
-            canvas.drawCircle(ox, oy, radius * (nm / 250f) * zoom, paint)
-        val cross = radius * zoom
-        canvas.drawLine(ox - cross, oy, ox + cross, oy, paint)
-        canvas.drawLine(ox, oy - cross, ox, oy + cross, paint)
+        canvas.drawCircle(ox, oy, radius, paint)
+        canvas.drawLine(ox - radius, oy, ox + radius, oy, paint)
+        canvas.drawLine(ox, oy - radius, ox, oy + radius, paint)
+        paint.textSize = sp(10f)
+        paint.strokeWidth = dp(1.25f)
+        paint.color = Color.rgb(196, 16, 29) // unmistakably red range rings
+        for (nm in nmRings) {
+            val rr = (radius * nm / maxNm).toFloat()
+            canvas.drawCircle(ox, oy, rr, paint)
+        }
         paint.style = Paint.Style.FILL
+        paint.textSize = sp(9f)
+        for (nm in nmRings) {
+            val rr = (radius * nm / maxNm).toFloat()
+            val label = PpiScale.formatNm(nm) + " NM"
+            val measured = paint.measureText(label)
+            val lx = if (ox + rr + dp(4f) + measured <= width - dp(3f))
+                ox + rr + dp(4f) else ox - rr - measured - dp(4f)
+            if (lx >= dp(2f) && lx + measured <= width - dp(2f))
+                canvas.drawText(label, lx, oy - dp(3f), paint)
+        }
         paint.color = black
         paint.textSize = sp(11f)
-        canvas.drawText("N", ox - dp(4f), oy - cross - dp(8f), paint)
-        canvas.drawText("E", ox + cross + dp(4f), oy + dp(4f), paint)
+        canvas.drawText("N", ox - dp(4f), oy - radius - dp(8f), paint)
+        canvas.drawText("E", ox + radius + dp(4f), oy + dp(4f), paint)
         paint.textSize = sp(9f)
-        canvas.drawText("Δ MSSR     U COMBINED     ○ PSR", dp(6f), dp(16f), paint)
-        if (zoom <= 2f) {
-            for (nm in listOf(60,120,180,250)) {
-                val x = ox + radius * (nm/250f) * zoom
-                if (x + dp(14f) < width) canvas.drawText("$nm", x + dp(3f), oy - dp(4f), paint)
-            }
-        }
+        canvas.drawText("Δ MSSR    U COMBINED    ○ PSR", dp(6f), dp(16f), paint)
         val current = state ?: return
         val bearing = if (sweepAzimuthDegrees.isNaN()) (current.sector ?: 0) * 11.25f else sweepAzimuthDegrees
-        canvas.drawArc(RectF(ox-cross, oy-cross, ox+cross, oy+cross), bearing - 90f, 11.25f, true, sectorShade)
+        canvas.drawArc(RectF(ox-radius, oy-radius, ox+radius, oy+radius), bearing - 90f, 11.25f, true, sectorShade)
         val radians = Math.toRadians((bearing-90f).toDouble())
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = dp(1.1f)
         paint.color = lightGray
-        canvas.drawLine(ox, oy, ox + (cross*cos(radians)).toFloat(),
-            oy + (cross*sin(radians)).toFloat(), paint)
+        canvas.drawLine(ox, oy, ox + (radius*cos(radians)).toFloat(),
+            oy + (radius*sin(radians)).toFloat(), paint)
 
         hitPoints.clear()
         val tracks = current.allTracks().filter { filter.allows(it) }.sortedWith(compareBy({ it.number },{ it.primary }))
         if (showTrails && filter.showTrails) {
             paint.style = Paint.Style.STROKE
-            paint.strokeWidth = dp(.7f)
-            paint.color = Color.rgb(175, 175, 175)
+            paint.strokeWidth = dp(1.65f)
+            paint.color = Color.rgb(26, 77, 121) // strong aviation-blue trails on gray PPI
             for ((_, trail) in current.trackTrail) {
-                val visible = trail.filter { filter.allows(it) }
+                val visible = trail.takeLast(current.trailDepth).filter { filter.allows(it) }
                 if (visible.size < 2) continue
-                var last = pointFor(visible.first(),cx,cy,radius)
+                var last = pointFor(visible.first(), cx, cy, radius)
                 for (track in visible.drop(1)) {
-                    val point = pointFor(track,cx,cy,radius)
-                    canvas.drawLine(last.first,last.second,point.first,point.second,paint)
-                    last=point
+                    val point = pointFor(track, cx, cy, radius)
+                    canvas.drawLine(last.first, last.second, point.first, point.second, paint)
+                    last = point
                 }
+                paint.style = Paint.Style.FILL
+                for (historic in visible.dropLast(1)) {
+                    val (tx, ty) = pointFor(historic, cx, cy, radius)
+                    canvas.drawCircle(tx, ty, dp(1.7f), paint)
+                }
+                paint.style = Paint.Style.STROKE
             }
         }
         val visibleTargets = ArrayList<Triple<RadarTrack, Float, Float>>()
@@ -231,7 +251,7 @@ class RadarView(context: Context) : View(context) {
         paint.style = Paint.Style.FILL
         paint.color = black
         paint.textSize = sp(10f)
-        canvas.drawText("${visibleTargets.size} targets  •  Scan ${current.cycle}  •  Sector ${current.sector?.toString(16)?.uppercase()?.padStart(2,'0') ?: "--"}  •  ${if (zoom > 1f) "Zoom %.1f×".format(java.util.Locale.US,zoom) else "250 NM"}",
+        canvas.drawText("${visibleTargets.size} targets  •  Scan ${current.cycle}  •  Sector ${current.sector?.toString(16)?.uppercase()?.padStart(2,'0') ?: "--"}  •  Range 0–${PpiScale.formatNm(maxNm)} NM  •  Trail ${current.trailDepth}",
             dp(8f),height-dp(10f),paint)
     }
 

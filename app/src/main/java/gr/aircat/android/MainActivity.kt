@@ -20,13 +20,14 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
+import android.widget.HorizontalScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import java.io.InputStreamReader
 import java.util.Locale
 import java.util.concurrent.Executors
 
-/** AIRCAT500 Mobile v1.1 — desktop v9.16 diagnostics with improved radar and bidirectional replay. */
+/** Aircat500_Analyzer v1.2 — mobile PPI and desktop-equivalent summary views. */
 class MainActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
@@ -50,8 +51,8 @@ class MainActivity : Activity() {
 
     private lateinit var info: TextView
     private lateinit var monitor: TextView
-    private lateinit var errors: TextView
-    private lateinit var alerts: TextView
+    private lateinit var errors: SummaryTableView
+    private lateinit var alerts: SummaryTableView
     private lateinit var radar: RadarView
     private lateinit var chart: ChartView
     private lateinit var progress: ProgressBar
@@ -62,11 +63,13 @@ class MainActivity : Activity() {
     private lateinit var forwards: Button
     private lateinit var rate: Button
     private lateinit var chartModeButton: Button
+    private lateinit var peakButton: Button
+    private lateinit var chartControls: LinearLayout
     private lateinit var showViews: Array<View>
     private lateinit var tabButtons: Array<Button>
 
-    private val fg = Color.rgb(16, 20, 22)
-    private val bg = Color.rgb(235, 237, 239)
+    private val fg = Color.rgb(16, 46, 74)
+    private val bg = Color.rgb(217, 231, 242) // aviation blue surrounding PPI
     private fun dp(x: Int) = (x * resources.displayMetrics.density + .5f).toInt()
     private fun title(text: String, size: Float = 12f) = TextView(this).apply {
         this.text = text
@@ -79,7 +82,8 @@ class MainActivity : Activity() {
         this.text = text
         textSize = size
         isAllCaps = false
-        setTextColor(Color.BLACK)
+        setTextColor(Color.WHITE)
+        backgroundTintList = ColorStateList.valueOf(Color.rgb(24, 85, 132))
         setPadding(dp(1), dp(1), dp(1), dp(1))
         setOnClickListener { onTap() }
     }
@@ -89,14 +93,14 @@ class MainActivity : Activity() {
     }
     private fun scrollText(output: TextView): ScrollView = ScrollView(this).apply {
         isFillViewport = true
-        setBackgroundColor(Color.rgb(248, 249, 250))
+        setBackgroundColor(Color.rgb(241, 246, 251))
         addView(output)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = Color.rgb(49, 56, 60)
-        window.navigationBarColor = Color.rgb(49, 56, 60)
+        window.statusBarColor = Color.rgb(15, 65, 108)
+        window.navigationBarColor = Color.rgb(15, 65, 108)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
@@ -115,7 +119,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v1.1", 17f))
+        root.addView(title("Aircat500_Analyzer  •  v1.2", 17f))
         val open = button("Άνοιγμα", 11f) { chooseFile() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 11f) { exportReport() }
@@ -142,10 +146,15 @@ class MainActivity : Activity() {
             onTrackTap = { track -> showTrack(track) }
         }
         monitor = title("Δεν έχει φορτωθεί αρχείο.")
-        errors = title("Δεν υπάρχουν στοιχεία σφαλμάτων.")
-        alerts = title("Δεν υπάρχουν στοιχεία alerts.")
+        errors = SummaryTableView(this).apply { setErrorRows(emptyList()) }
+        alerts = SummaryTableView(this).apply { setAlertRows(emptyList()) }
         chart = ChartView(this)
-        val views: Array<View> = arrayOf(radar, scrollText(monitor), scrollText(errors), scrollText(alerts), chart)
+        val chartScroller = HorizontalScrollView(this).apply {
+            isFillViewport = true
+            setBackgroundColor(Color.rgb(241, 246, 251))
+            addView(chart, android.widget.FrameLayout.LayoutParams(dp(1280), -1))
+        }
+        val views: Array<View> = arrayOf(radar, scrollText(monitor), errors, alerts, chartScroller)
         showViews = views
         views.forEach { body.addView(it, LinearLayout.LayoutParams(-1, 0, 1f)) }
         chartModeButton = button("SECTOR PACKETS  ▾", 11f) {
@@ -153,7 +162,12 @@ class MainActivity : Activity() {
             chart.chartMode = chartMode
             chartModeButton.text = listOf("SECTOR PACKETS  ▾", "MISSING SECTORS  ▾", "AIRCAT TYPES  ▾", "ALERTS  ▾")[chartMode]
         }
-        root.addView(chartModeButton, LinearLayout.LayoutParams(-1, dp(35)))
+        peakButton = button("ZOOM PEAK ✓", 10f) {
+            chart.zoomPeak = !chart.zoomPeak
+            peakButton.text = if (chart.zoomPeak) "ZOOM PEAK ✓" else "ZOOM OUT"
+        }
+        chartControls = row(chartModeButton, peakButton, height = 35)
+        root.addView(chartControls)
         timeLabel = title("Χρόνος: 00:00 / 00:00  •  Replay διαθέσιμο μετά το άνοιγμα", 11f)
         root.addView(timeLabel, LinearLayout.LayoutParams(-1, dp(24)))
         seek = SeekBar(this).apply {
@@ -203,7 +217,7 @@ class MainActivity : Activity() {
         if (!::showViews.isInitialized) return
         for ((i, view) in showViews.withIndex()) view.visibility = if (i == index) View.VISIBLE else View.GONE
         for ((i, btn) in tabButtons.withIndex()) btn.alpha = if (i == index) 1f else .69f
-        chartModeButton.visibility = if (index == 4) View.VISIBLE else View.GONE
+        chartControls.visibility = if (index == 4) View.VISIBLE else View.GONE
         if (index == 1 || index == 2 || index == 3) refreshAnalysisPages()
     }
 
@@ -281,6 +295,7 @@ class MainActivity : Activity() {
                     sectorSeconds = ((analysis.medianPeriod ?: 3.956) / 32.0).coerceIn(.02, 5.0)
                     seek.progress = 0
                     chart.diagnostics = analysis
+                    chart.captureName = loaded.name
                     refreshAnalysisPages()
                     progress.visibility = View.GONE
                     showTab(0)
@@ -420,8 +435,8 @@ class MainActivity : Activity() {
         val stats = diagnostics ?: return
         val head = "${data.name}\n${data.summary.packets} frames • ${stats.completedCycles} complete cycles • ${data.summary.tracksDecoded} track elements"
         monitor.text = "$head\n\n${AircatReport.create(data, stats)}"
-        errors.text = AircatReport.errors(stats)
-        alerts.text = AircatReport.alerts(stats)
+        errors.setErrorRows(AircatSummaries.errorRows(stats))
+        alerts.setAlertRows(AircatSummaries.alertRows(stats))
         chart.diagnostics = stats
     }
 
@@ -537,13 +552,25 @@ class MainActivity : Activity() {
     private fun exportReport() {
         val data = capture ?: run { info.text = "Άνοιξε πρώτα μια καταγραφή."; return }
         val stats = diagnostics ?: return
-        pendingReport = AircatReport.create(data,stats) + "\n\n" + AircatReport.errors(stats) + "\n\n" + AircatReport.alerts(stats)
-        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_Mobile_v1_1_report.txt")
-        }
-        startActivityForResult(intent, 78)
+        AlertDialog.Builder(this)
+            .setTitle("Report — τι κάνει;")
+            .setMessage("Δημιουργεί αναλυτική αναφορά TXT για την τρέχουσα καταγραφή. " +
+                "Περιλαμβάνει NORTH, sectors, timing, CRC (όταν υπάρχουν μετρητές), " +
+                "σύνοψη σφαλμάτων χωρίς διπλομέτρηση, Mode A/C και συμβάντα Alerts.\n\n" +
+                "Δεν τροποποιεί το αρχικό CSV/BIN/PCAP και δεν στέλνει δεδομένα στο Internet. " +
+                "Θα επιλέξεις εσύ πού θα αποθηκευτεί το αρχείο.")
+            .setPositiveButton("Αποθήκευση TXT") { _, _ ->
+                pendingReport = AircatReport.create(data,stats) + "\n\n" +
+                    AircatReport.errors(stats) + "\n\n" + AircatReport.alerts(stats)
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TITLE, "Aircat500_Analyzer_v1_2_report.txt")
+                }
+                startActivityForResult(intent, 78)
+            }
+            .setNegativeButton("Άκυρο", null)
+            .show()
     }
 
     override fun onDestroy() {

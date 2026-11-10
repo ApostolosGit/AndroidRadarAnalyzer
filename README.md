@@ -26,3 +26,14 @@ The raw capture files are **not** included in the public GitHub repository.
 Build with Android Studio (API 26+, target SDK 35), or run `gradle :app:testDebugUnitTest :app:assembleDebug` using Gradle 8.11.1 and JDK 17.
 
 This version is **offline**. Live Wi-Fi AP / SYNC2USB, Bluetooth and physical USB acquisition are not included yet. Device compatibility and visual acceptance still require user testing on a physical Android handset.
+
+
+## v1.2 — Aviation-blue UI and desktop-like summaries
+- Deeper gray PPI; red concentric range rings with real NM labels; outer range = 250 NM / zoom.
+- Track number label OFF by default, Mode A/C ON. Tracks retain a 10-position trail by default.
+- Dynamic stacked sector histogram with Correct (blue), Missing (red), Without previous NORTH (pink);
+  Zoom Peak enabled, horizontal scrolling on a phone.
+- Errors and Alerts summary tables, broken down by PSR/MSSR/Other where possible.
+- Report button explains exactly what it writes before opening the Android save dialog.
+- Live SYNC2USB Wi-Fi is not yet included; offline CSV/BIN/PCAP replay remains available.
+- Unknown prefix/malformed diagnostics unavailable from the current mobile parser are shown as “—” rather than invented zeros.

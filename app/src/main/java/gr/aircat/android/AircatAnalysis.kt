@@ -12,7 +12,7 @@ data class RadarFilter(
     val showLowQuality: Boolean = true,
     val showCancelled: Boolean = true,
     val showLabels: Boolean = true,
-    val showTrackNumber: Boolean = true,
+    val showTrackNumber: Boolean = false,
     val showModeA: Boolean = true,
     val showModeC: Boolean = true,
     val showSpeed: Boolean = false,
@@ -72,7 +72,7 @@ data class RadarCycleIssue(
 
 data class RadarAlert(
     val frame: Long, val time: Double, val sector: Int?, val track: Int?,
-    val severity: Int, val category: String, val detail: String
+    val severity: Int, val category: String, val detail: String, val source: String = "Other"
 )
 
 data class CaptureDiagnostics(
@@ -91,7 +91,9 @@ data class CaptureDiagnostics(
     val ignoredLeading: Int,
     val ignoredTrailing: Int,
     val crcAssociatedGaps: Int,
-    val firstTimestamp: Double?, val lastTimestamp: Double?
+    val firstTimestamp: Double?, val lastTimestamp: Double?,
+    val sectorWithoutNorthCounts: IntArray = IntArray(32),
+    val unknownProtocolTypes: Int = 0
 ) {
     val missingTotal: Int get() = missingCounts.sum()
     val invalidCycles: Int get() = cycles.count { it.invalid }
@@ -110,6 +112,7 @@ object AircatAnalysis {
         val typeCounts = packets.groupingBy { it.kind }.eachCount().toSortedMap()
         val sectors = IntArray(32)
         val missingCounts = IntArray(32)
+        val withoutNorth = IntArray(32)
         for (packet in packets) packet.sector?.let { if (it in 0..31) sectors[it]++ }
         val cycleIssues = ArrayList<RadarCycleIssue>()
         val northTimes = ArrayList<Double>()
@@ -150,6 +153,7 @@ object AircatAnalysis {
                 prevFrame = packet.framingFailTotal ?: prevFrame
             } else if (previousNorth == null) {
                 leading++
+                packet.sector?.let { if (it in 0..31) withoutNorth[it]++ }
             } else {
                 packet.sector?.let { if (it in 0..31) currentSectors.add(it) }
                 val crc = packet.crcFailTotal
@@ -176,36 +180,46 @@ object AircatAnalysis {
         val alertEvents = ArrayList<RadarAlert>()
         val sourceCounts = mutableMapOf<String, Int>()
         val modeCounts = mutableMapOf<String, Int>()
+        val lastSeenSource = mutableMapOf<Int, String>()
         for (packet in packets) {
             for (track in packet.tracks) {
+                // Match the desktop source split: FE -> PSR, FF -> MSSR,
+                // unresolvable FB cancellation -> Other.
+                val source = if (track.cancellation) lastSeenSource[track.number] ?: "Other"
+                    else if (track.primary) "PSR" else "MSSR"
                 if (track.cancellation) {
                     alertEvents.add(RadarAlert(packet.frameNo, packet.epochSeconds, packet.sector,
-                        track.number, 1, "CANCEL", "Track ${track.number} cancelled"))
+                        track.number, 1, "CANCEL", "Track ${track.number} cancelled", source))
+                    lastSeenSource.remove(track.number)
                     continue
                 }
+                lastSeenSource[track.number] = source
                 sourceCounts[track.kindLabel] = (sourceCounts[track.kindLabel] ?: 0) + 1
                 track.modeA?.let { modeCounts[it] = (modeCounts[it] ?: 0) + 1 }
                 val special = track.specialModeAlert
-                if (special != null) {
-                    alertEvents.add(RadarAlert(packet.frameNo, packet.epochSeconds, packet.sector,
-                        track.number, 3, "MODE A", special))
-                }
+                if (special != null) alertEvents.add(RadarAlert(packet.frameNo, packet.epochSeconds,
+                    packet.sector, track.number, 3, "MODE A", special, source))
                 if (track.emergency) alertEvents.add(RadarAlert(packet.frameNo,
-                    packet.epochSeconds, packet.sector, track.number, 3, "SSR EMERGENCY", "P/F emergency bit"))
+                    packet.epochSeconds, packet.sector, track.number, 3, "SSR EMERGENCY", "P/F emergency bit", source))
                 if (track.spi) alertEvents.add(RadarAlert(packet.frameNo,
-                    packet.epochSeconds, packet.sector, track.number, 2, "SPI", "Ident / SPI SSR reply"))
+                    packet.epochSeconds, packet.sector, track.number, 2, "SPI", "Ident / SPI SSR reply", source))
+                if (track.maneuver) alertEvents.add(RadarAlert(packet.frameNo,
+                    packet.epochSeconds, packet.sector, track.number, 1, "MANEUVER", "Maneuver bit set", source))
                 if (track.modeAInvalid || track.modeCInvalid) alertEvents.add(RadarAlert(packet.frameNo,
                     packet.epochSeconds, packet.sector, track.number, 1, "VALIDATION",
-                    "Mode A invalid ${track.modeAInvalid}; Mode C invalid ${track.modeCInvalid}"))
+                    "Mode A invalid ${track.modeAInvalid}; Mode C invalid ${track.modeCInvalid}", source))
                 if (track.isLowQuality) alertEvents.add(RadarAlert(packet.frameNo,
                     packet.epochSeconds, packet.sector, track.number, 1, "LOW QUALITY",
-                    "Quality ${track.quality}/${if (track.primary) 7 else 127}"))
+                    "Quality ${track.quality}/${if (track.primary) 7 else 127}", source))
             }
         }
+        val unknown = packets.count { it.kind !in listOf(0x0C, 0x0D, 0x19, 0x2A) }
         return CaptureDiagnostics(typeCounts, sectors, missingCounts, cycleIssues, intervals, missed,
             jitter, protocolOnly, faultTotal, alertEvents, sourceCounts.toSortedMap(),
             modeCounts.toSortedMap(), leading, trailing, crcSuspectGaps,
-            packets.firstOrNull()?.epochSeconds, packets.lastOrNull()?.epochSeconds)
+            packets.firstOrNull()?.epochSeconds, packets.lastOrNull()?.epochSeconds,
+            withoutNorth, unknown)
+
     }
 }
 
@@ -216,7 +230,7 @@ object AircatReport {
 
     fun create(capture: RadarCapture, stats: CaptureDiagnostics): String = buildString {
         val base = capture.summary
-        appendLine("AIRCAT500 MOBILE v1.0 — ΑΝΑΛΥΣΗ ΚΑΤΑΓΡΑΦΗΣ")
+        appendLine("Aircat500_Analyzer MOBILE v1.2 — ΑΝΑΛΥΣΗ ΚΑΤΑΓΡΑΦΗΣ")
         appendLine("Αρχείο: ${capture.name}")
         appendLine("Οι μετρήσεις προέρχονται από πραγματικά AIRCAT payloads.")
         append(section("ΠΑΚΕΤΑ / NORTH / SECTORS"))

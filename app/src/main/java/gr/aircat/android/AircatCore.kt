@@ -289,7 +289,7 @@ object AircatCsv {
 class RadarReplayState {
     val tracksBySector = HashMap<Int, List<RadarTrack>>()
     val trackTrail = HashMap<Int, ArrayDeque<RadarTrack>>()
-    var trailDepth = 6
+    var trailDepth = 10 // Show up to ten genuine successive positions by default.
     var sector: Int? = null
     var cycle = 0
     var packetsShown = 0
@@ -349,8 +349,10 @@ class RadarReplayState {
                 tracksBySector[packet.sector] = incoming.filterNot { it.cancellation }
                 for (track in incoming.filterNot { it.cancellation }) {
                     val trail = trackTrail.getOrPut(track.number) { ArrayDeque() }
-                    trail.add(track)
-                    while (trail.size > maxOf(2, trailDepth)) trail.removeFirst()
+                    if (trail.lastOrNull()?.let { it.xRaw != track.xRaw || it.yRaw != track.yRaw } != false) {
+                        trail.add(track)
+                        while (trail.size > maxOf(2, trailDepth)) trail.removeFirst()
+                    }
                 }
             }
             packet.kind == 0x0D && packet.tracks.isNotEmpty() -> {
@@ -363,8 +365,10 @@ class RadarReplayState {
                     .associateBy { it.primary to it.number }.values.toList()
                 for (track in additions) {
                     val trail = trackTrail.getOrPut(track.number) { ArrayDeque() }
-                    trail.add(track)
-                    while (trail.size > maxOf(2, trailDepth)) trail.removeFirst()
+                    if (trail.lastOrNull()?.let { it.xRaw != track.xRaw || it.yRaw != track.yRaw } != false) {
+                        trail.add(track)
+                        while (trail.size > maxOf(2, trailDepth)) trail.removeFirst()
+                    }
                 }
             }
         }
@@ -378,7 +382,7 @@ class ReplayCheckpoints(private val packets: List<RadarPacket>, private val stri
     private val states = ArrayList<RadarReplayState.Snapshot>()
     init {
         require(stride > 0)
-        val scan = RadarReplayState()
+        val scan = RadarReplayState().apply { trailDepth = 10 }
         states.add(scan.snapshot()) // Zero processed frames.
         packets.forEachIndexed { i, packet ->
             scan.apply(packet)
