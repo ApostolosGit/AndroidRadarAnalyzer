@@ -1,7 +1,7 @@
 name: Android Debug APK
 on:
   push:
-    branches: [main, feature/offline-csv-replay-android, feature/mobile-v1-desktop-port]
+    branches: [main, feature/offline-csv-replay-android, feature/mobile-v1-desktop-port, feature/mobile-v1-1-radar-timeline]
   pull_request:
     branches: [main]
   workflow_dispatch:
