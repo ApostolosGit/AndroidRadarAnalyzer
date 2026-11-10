@@ -151,12 +151,12 @@ class RadarView(context: Context) : View(context) {
             oy + (cross*sin(radians)).toFloat(), paint)
         hitPoints.clear()
         val tracks = current.allTracks().filter { filter.allows(it) }
-        if (showTrails && filter.showTrails) {
+        if (filter.showTrails) {
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = dp(.8f)
-            paint.color = Color.argb(95, 108, 240, 170)
+            paint.color = Color.argb(160, 58, 62, 64)
             for ((_, trail) in current.trackTrail) {
-                val visibleTrail = trail.filter { filter.allows(it) }
+                val visibleTrail = trail.takeLast(trailHistoryLength).filter { filter.allows(it) }
                 if (visibleTrail.size < 2) continue
                 var previous = pointFor(visibleTrail.first(), cx, cy, radius)
                 for (track in visibleTrail.drop(1)) {
@@ -167,38 +167,69 @@ class RadarView(context: Context) : View(context) {
             }
         }
         val labelAreas = ArrayList<RectF>()
-        for ((index, track) in tracks.withIndex()) {
-            if (hypot(track.xRaw.toDouble(),track.yRaw.toDouble()) > 250.0*coordinateDivisor*1.1) continue
+        for (track in tracks) {
             val (x,y) = pointFor(track,cx,cy,radius)
-            if (x < -dp(5f) || x > width+dp(5f) || y < -dp(5f) || y > height+dp(5f)) continue
-            paint.style = Paint.Style.FILL
+            if (x < -dp(8f) || x > width+dp(8f) || y < -dp(8f) || y > height+dp(8f)) continue
             val selected = track.number == selectedTrackNumber
-            paint.color = when {
-                track.alert -> color("#FF6C6C")
-                selected -> Color.WHITE
-                track.cancelled -> color("#A0A0A0")
-                track.isLowQuality -> color("#91AE9F")
-                track.combined -> color("#6FD8FF")
-                track.primary -> color("#FFD17B")
-                else -> color("#70EFAB")
+            val d = dp(4.8f)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = dp(1.7f)
+            paint.strokeJoin = Paint.Join.ROUND
+            paint.strokeCap = Paint.Cap.ROUND
+            paint.color = Color.BLACK
+            when {
+                track.combined -> {
+                    // U is a true path, not a font-dependent character.
+                    val path = Path().apply {
+                        moveTo(x-d, y-d)
+                        lineTo(x-d, y+d*.25f)
+                        quadTo(x, y+d*1.7f, x+d, y+d*.25f)
+                        lineTo(x+d, y-d)
+                    }
+                    canvas.drawPath(path, paint)
+                }
+                track.primary -> canvas.drawCircle(x,y,d,paint) // Solo PSR: O
+                else -> {
+                    // MSSR: black delta
+                    val path = Path().apply {
+                        moveTo(x,y-d*1.25f)
+                        lineTo(x+d*1.15f,y+d)
+                        lineTo(x-d*1.15f,y+d)
+                        close()
+                    }
+                    canvas.drawPath(path,paint)
+                }
             }
-            canvas.drawCircle(x,y,dp(if(selected || track.alert) 4.6f else 3.1f),paint)
+            if (selected || track.alert) {
+                paint.color = if (track.alert) ringColor else Color.rgb(58,86,119)
+                paint.strokeWidth = dp(1f)
+                canvas.drawCircle(x,y,d*2.3f,paint)
+            }
             hitPoints.add(track to (x to y))
-            if (filter.showLabels && (tracks.size <= 35 || selected || track.alert || index % 6 == 0)) {
-                paint.textSize = sp(10f)
-                val label = buildString {
-                    append(track.number)
-                    if (track.modeA != null) append("/"+track.modeA)
-                    if (track.alert) append(" !")
-                }
+            if (filter.showLabels) {
+                paint.style = Paint.Style.FILL
+                paint.textSize = sp(9f)
+                val label = "#" + track.number + " A:" + (track.modeA ?: "----") +
+                    " C:" + (track.modeC ?: "----")
                 val w = paint.measureText(label)
-                val lx = if (x+w+dp(9f) < width) x+dp(6f) else x-w-dp(7f)
-                val ly = y - dp(5f)
-                val area = RectF(lx,ly-paint.textSize,lx+w,ly+dp(4f))
-                if (lx >= 0 && ly > paint.textSize && (selected || labelAreas.none { RectF.intersects(it,area) })) {
-                    canvas.drawText(label,lx,ly,paint)
-                    labelAreas.add(area)
-                }
+                val h = paint.textSize
+                // All targets get their Mode A/C label; choose the least
+                // obstructed of four positions rather than hiding any label.
+                val candidateAreas = arrayOf(
+                    RectF(x+dp(7f),y-h-dp(6f),x+w+dp(10f),y-dp(3f)),
+                    RectF(x+dp(7f),y+dp(5f),x+w+dp(10f),y+h+dp(8f)),
+                    RectF(x-w-dp(10f),y-h-dp(6f),x-dp(7f),y-dp(3f)),
+                    RectF(x-w-dp(10f),y+dp(5f),x-dp(7f),y+h+dp(8f))
+                )
+                val area = candidateAreas.minByOrNull { rect ->
+                    labelAreas.count { RectF.intersects(it,rect) } * 10 +
+                        if (rect.left<0 || rect.right>width || rect.top<0 || rect.bottom>height) 100 else 0
+                } ?: continue
+                paint.color = Color.argb(225,235,237,239)
+                canvas.drawRect(area,paint)
+                paint.color = Color.BLACK
+                canvas.drawText(label,area.left+dp(1f),area.bottom-dp(4f),paint)
+                labelAreas.add(area)
             }
         }
         paint.style = Paint.Style.FILL
