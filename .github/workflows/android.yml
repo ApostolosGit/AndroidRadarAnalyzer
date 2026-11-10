@@ -1,0 +1,56 @@
+name: AIRCAT500 Mobile v1.1 — Light Gray Radar APK
+on:
+  push:
+    branches: [feature/mobile-v1-1-white-radar-replay]
+    paths: [.github/aircat_v1_1.trigger]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  android-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and unpack v1.1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f .github/aircat_v1_1.trigger ]; then
+            test "$(find .github/v1_1_parts -name 'part-*.b64' | wc -l)" -eq 5
+            cat .github/v1_1_parts/part-*.b64 | base64 --decode > /tmp/aircat-v1-1.patch.xz
+            echo '7512e3dcc7fe9aca09365c5970848b53696c039fd69a34b8f3f3987d736076cd  /tmp/aircat-v1-1.patch.xz' | sha256sum --check
+            xz --decompress --stdout /tmp/aircat-v1-1.patch.xz | patch --batch -p1
+            rm .github/aircat_v1_1.trigger
+            rm -rf .github/v1_1_parts
+          fi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4
+      - name: Install Android SDK 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Unit tests and APK
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon
+      - name: Publish validated readable sources
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/mobile-v1-1-white-radar-replay'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A README.md README_V1_1_CHANGES_GR.txt app/build.gradle.kts app/src/main/java/gr/aircat/android app/src/test/java/gr/aircat/android .github/v1_1_parts .github/aircat_v1_1.trigger
+            git commit -m "AIRCAT500 Mobile v1.1: white radar, persistent tracks, bidirectional time replay"
+            git push origin HEAD:feature/mobile-v1-1-white-radar-replay
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIRCAT500-Mobile-v1-1-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
