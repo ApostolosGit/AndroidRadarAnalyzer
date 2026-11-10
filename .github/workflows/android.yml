@@ -24,6 +24,9 @@ jobs:
             cat .github/v12parts/part-*.b64 | base64 --decode > /tmp/aircat-v12.patch.xz
             echo 'a46979e66b18610f11939c5b534cb15e9fd9f90294ff02de26242f5f2b221201  /tmp/aircat-v12.patch.xz' | sha256sum --check
             xz --decompress --stdout /tmp/aircat-v12.patch.xz | patch --batch --fuzz=0 -p1
+            # Regression fixture has two valid sectors 00 and 01 (30 missing of 32).
+            sed -i 's/assertEquals("31",rows.first { it.name=="Sector missing συνολικά" }.value)/assertEquals("30",rows.first { it.name=="Sector missing συνολικά" }.value)/' app/src/test/java/gr/aircat/android/AircatV12Test.kt
+            grep -q 'assertEquals("30",rows.first' app/src/test/java/gr/aircat/android/AircatV12Test.kt
             rm .github/aircat_v1_2.trigger
             rm -rf .github/v12parts
           fi
