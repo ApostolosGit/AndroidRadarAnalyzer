@@ -9,14 +9,24 @@ data class RadarFilter(
     val showPSR: Boolean = true, val showMSSR: Boolean = true,
     val showLowQuality: Boolean = true, val showCancelled: Boolean = true,
     val showLabels: Boolean = true, val showTrails: Boolean = true,
-    val showOnlyAlerts: Boolean = false, val hideInvalidMode: Boolean = false
+    val showOnlyAlerts: Boolean = false, val hideInvalidMode: Boolean = false,
+    val minAltitudeFt: Int? = null, val maxAltitudeFt: Int? = null,
+    val minSpeedKt: Int? = null, val maxSpeedKt: Int? = null,
+    val minRangeNm: Double? = null, val maxRangeNm: Double? = null
 ) {
+    /** Unknown A/C or speed is excluded only when the corresponding numeric filter is active. */
     fun allows(track: RadarTrack): Boolean =
         (if (track.primary) showPSR else showMSSR) &&
         (showLowQuality || !track.isLowQuality) &&
         (showCancelled || !track.cancelled) &&
         (!showOnlyAlerts || track.alert) &&
-        (!hideInvalidMode || !(track.modeAInvalid || track.modeCInvalid))
+        (!hideInvalidMode || !(track.modeAInvalid || track.modeCInvalid)) &&
+        (minAltitudeFt == null || (track.altitudeFt != null && track.altitudeFt >= minAltitudeFt)) &&
+        (maxAltitudeFt == null || (track.altitudeFt != null && track.altitudeFt <= maxAltitudeFt)) &&
+        (minSpeedKt == null || (track.speedKt != null && track.speedKt >= minSpeedKt)) &&
+        (maxSpeedKt == null || (track.speedKt != null && track.speedKt <= maxSpeedKt)) &&
+        (minRangeNm == null || track.rangeNm32 >= minRangeNm) &&
+        (maxRangeNm == null || track.rangeNm32 <= maxRangeNm)
 }
 
 /** Independent offline diagnostics. The same sector ID is NOT counted twice because the North cycle is invalid. */
