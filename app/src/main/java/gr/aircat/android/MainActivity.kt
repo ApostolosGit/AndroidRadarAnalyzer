@@ -15,7 +15,6 @@ import android.view.WindowInsets
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
-import android.widget.InputType
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
