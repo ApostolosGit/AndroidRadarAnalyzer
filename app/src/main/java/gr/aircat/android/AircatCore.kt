@@ -293,19 +293,52 @@ class RadarReplayState {
     var sector: Int? = null
     var cycle = 0
     var packetsShown = 0
+    /** Epoch of last NORTH/sector boundary; lets reverse/seek restore the sweep exactly. */
+    var sectorEpoch = 0.0
     fun clear() {
-        tracksBySector.clear(); trackTrail.clear(); sector = null; cycle = 0; packetsShown = 0
+        tracksBySector.clear(); trackTrail.clear(); sector = null; cycle = 0
+        packetsShown = 0; sectorEpoch = 0.0
+    }
+
+    /** No NORTH-triggered erasure: paused screens retain their last drawn targets. */
+    fun clearVisibleTargets() {
+        tracksBySector.clear()
+        trackTrail.clear()
+    }
+
+    data class Snapshot(
+        val bySector: Map<Int, List<RadarTrack>>,
+        val trails: Map<Int, List<RadarTrack>>,
+        val sector: Int?, val cycle: Int, val packetsShown: Int, val sectorEpoch: Double
+    )
+    fun snapshot(): Snapshot = Snapshot(
+        tracksBySector.mapValues { it.value.toList() },
+        trackTrail.mapValues { it.value.toList() },
+        sector, cycle, packetsShown, sectorEpoch
+    )
+    fun restore(s: Snapshot) {
+        tracksBySector.clear()
+        tracksBySector.putAll(s.bySector)
+        trackTrail.clear()
+        for ((key, history) in s.trails) trackTrail[key] = ArrayDeque(history)
+        sector = s.sector
+        cycle = s.cycle
+        packetsShown = s.packetsShown
+        sectorEpoch = s.sectorEpoch
     }
     fun apply(packet: RadarPacket) {
         packetsShown++
         when {
             packet.kind == 0x19 -> {
                 cycle++
-                tracksBySector.clear()
+                // A NORTH marker starts a new rotation, not a blank radar screen.
+                // Each sector is refreshed as new data arrives during Play.
                 sector = null
+                sectorEpoch = packet.epochSeconds
             }
             packet.sector != null -> {
                 sector = packet.sector
+                sectorEpoch = packet.epochSeconds
                 val incoming = packet.tracks
                 val cancels = incoming.filter { it.cancellation }.map { it.number }.toSet()
                 if (cancels.isNotEmpty()) {
@@ -322,8 +355,13 @@ class RadarReplayState {
             }
             packet.kind == 0x0D && packet.tracks.isNotEmpty() -> {
                 // Extension messages do not have their own sector number.
-                tracksBySector[sector ?: -1] = packet.tracks.filterNot { it.cancellation }
-                for (track in packet.tracks.filterNot { it.cancellation }) {
+                val slot = sector ?: -1
+                val previous = tracksBySector[slot].orEmpty()
+                val additions = packet.tracks.filterNot { it.cancellation }
+                // Extension packets add/update tracks; do not erase a full sector.
+                tracksBySector[slot] = (previous + additions)
+                    .associateBy { it.primary to it.number }.values.toList()
+                for (track in additions) {
                     val trail = trackTrail.getOrPut(track.number) { ArrayDeque() }
                     trail.add(track)
                     while (trail.size > maxOf(2, trailDepth)) trail.removeFirst()
@@ -332,4 +370,40 @@ class RadarReplayState {
         }
     }
     fun allTracks(): List<RadarTrack> = tracksBySector.values.flatten()
+}
+
+
+/** Sparse checkpoints make reverse replay and arbitrary seeking bounded and deterministic. */
+class ReplayCheckpoints(private val packets: List<RadarPacket>, private val stride: Int = 128) {
+    private val states = ArrayList<RadarReplayState.Snapshot>()
+    init {
+        require(stride > 0)
+        val scan = RadarReplayState()
+        states.add(scan.snapshot()) // Zero processed frames.
+        packets.forEachIndexed { i, packet ->
+            scan.apply(packet)
+            if ((i + 1) % stride == 0) states.add(scan.snapshot())
+        }
+    }
+
+    /** 0-based frame index. Rebuilds at most stride-1 packets after a checkpoint. */
+    fun restore(target: RadarReplayState, frame: Int) {
+        if (packets.isEmpty()) { target.clear(); return }
+        val safe = frame.coerceIn(0, packets.lastIndex)
+        val checkpoint = (safe + 1) / stride
+        target.restore(states[checkpoint])
+        for (i in (checkpoint * stride)..safe) target.apply(packets[i])
+    }
+
+    /** Binary search for the displayed capture time (no assumption of uniform frame gaps). */
+    fun indexAtOrBefore(epochSeconds: Double): Int {
+        if (packets.isEmpty()) return 0
+        var low = 0
+        var high = packets.lastIndex
+        while (low < high) {
+            val mid = (low + high + 1) ushr 1
+            if (packets[mid].epochSeconds <= epochSeconds) low = mid else high = mid - 1
+        }
+        return low
+    }
 }

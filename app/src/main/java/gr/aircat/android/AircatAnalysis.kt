@@ -6,17 +6,60 @@ import kotlin.math.roundToInt
 
 /** Display filters adopted from the desktop AIRCAT500 Analyzer. */
 data class RadarFilter(
-    val showPSR: Boolean = true, val showMSSR: Boolean = true,
-    val showLowQuality: Boolean = true, val showCancelled: Boolean = true,
-    val showLabels: Boolean = true, val showTrails: Boolean = true,
-    val showOnlyAlerts: Boolean = false, val hideInvalidMode: Boolean = false
+    val showPSR: Boolean = true,
+    val showMSSR: Boolean = true,
+    val showCombined: Boolean = true,
+    val showLowQuality: Boolean = true,
+    val showCancelled: Boolean = true,
+    val showLabels: Boolean = true,
+    val showTrackNumber: Boolean = true,
+    val showModeA: Boolean = true,
+    val showModeC: Boolean = true,
+    val showSpeed: Boolean = false,
+    val showRange: Boolean = false,
+    val showQuality: Boolean = false,
+    val showVelocityVectors: Boolean = false,
+    val showTrails: Boolean = true,
+    val showOnlyAlerts: Boolean = false,
+    val hideInvalidMode: Boolean = false,
+    val minAltitudeFt: Int? = null,
+    val maxAltitudeFt: Int? = null,
+    val minSpeedKt: Int? = null,
+    val maxSpeedKt: Int? = null
 ) {
-    fun allows(track: RadarTrack): Boolean =
-        (if (track.primary) showPSR else showMSSR) &&
-        (showLowQuality || !track.isLowQuality) &&
-        (showCancelled || !track.cancelled) &&
-        (!showOnlyAlerts || track.alert) &&
-        (!hideInvalidMode || !(track.modeAInvalid || track.modeCInvalid))
+    fun allows(track: RadarTrack): Boolean {
+        val kindEnabled = when {
+            track.combined -> showCombined
+            track.primary -> showPSR
+            else -> showMSSR
+        }
+        if (!kindEnabled || (!showLowQuality && track.isLowQuality) ||
+            (!showCancelled && track.cancelled) ||
+            (showOnlyAlerts && !track.alert) ||
+            (hideInvalidMode && (track.modeAInvalid || track.modeCInvalid))) return false
+
+        // Mode C is supplied by the AIRCAT decoder as feet e.g. "17500ft".
+        // An unreported/invalid Mode C must not silently pass an altitude filter.
+        if (minAltitudeFt != null || maxAltitudeFt != null) {
+            val altitude = altitudeFeet(track.modeC) ?: return false
+            if (minAltitudeFt != null && altitude < minAltitudeFt) return false
+            if (maxAltitudeFt != null && altitude > maxAltitudeFt) return false
+        }
+        if (minSpeedKt != null || maxSpeedKt != null) {
+            val speed = track.speedKt ?: return false
+            if (minSpeedKt != null && speed < minSpeedKt) return false
+            if (maxSpeedKt != null && speed > maxSpeedKt) return false
+        }
+        return true
+    }
+
+    companion object {
+        private val MODE_C_FEET = Regex("^([+-]?\\d+)ft$", RegexOption.IGNORE_CASE)
+        fun altitudeFeet(value: String?): Int? {
+            val text = value?.trim() ?: return null
+            return MODE_C_FEET.matchEntire(text)?.groupValues?.get(1)?.toIntOrNull()
+        }
+    }
 }
 
 /** Independent offline diagnostics. The same sector ID is NOT counted twice because the North cycle is invalid. */

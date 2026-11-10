@@ -4,6 +4,10 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
+import android.content.res.ColorStateList
+import android.text.InputType
+import android.widget.CheckBox
+import android.widget.EditText
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -22,16 +26,18 @@ import java.io.InputStreamReader
 import java.util.Locale
 import java.util.concurrent.Executors
 
-/** AIRCAT500 Mobile v1.0 — Android port of the desktop v9.16 analysis/replay features. */
+/** AIRCAT500 Mobile v1.1 — desktop v9.16 diagnostics with improved radar and bidirectional replay. */
 class MainActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private val replay = RadarReplayState()
     private var capture: RadarCapture? = null
+    private var checkpoints: ReplayCheckpoints? = null
     private var diagnostics: CaptureDiagnostics? = null
     private var record = 0
     private var playing = false
     private var speed = 1.0
+    private var direction = 1 // +1 forward, -1 reverse
     private var startTime = 0.0
     private var clockStart = 0L
     private var sectorEpoch = 0.0
@@ -50,7 +56,10 @@ class MainActivity : Activity() {
     private lateinit var chart: ChartView
     private lateinit var progress: ProgressBar
     private lateinit var seek: SeekBar
+    private lateinit var timeLabel: TextView
     private lateinit var play: Button
+    private lateinit var backwards: Button
+    private lateinit var forwards: Button
     private lateinit var rate: Button
     private lateinit var chartModeButton: Button
     private lateinit var showViews: Array<View>
@@ -106,7 +115,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v1.0", 17f))
+        root.addView(title("AIRCAT500 Mobile  v1.1", 17f))
         val open = button("Άνοιγμα", 11f) { chooseFile() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 11f) { exportReport() }
@@ -145,27 +154,46 @@ class MainActivity : Activity() {
             chartModeButton.text = listOf("SECTOR PACKETS  ▾", "MISSING SECTORS  ▾", "AIRCAT TYPES  ▾", "ALERTS  ▾")[chartMode]
         }
         root.addView(chartModeButton, LinearLayout.LayoutParams(-1, dp(35)))
+        timeLabel = title("Χρόνος: 00:00 / 00:00  •  Replay διαθέσιμο μετά το άνοιγμα", 11f)
+        root.addView(timeLabel, LinearLayout.LayoutParams(-1, dp(24)))
         seek = SeekBar(this).apply {
-            max = 0
+            max = 10000 // Relative capture time, not the packet number.
+            progressTintList = ColorStateList.valueOf(Color.BLACK)
+            thumbTintList = ColorStateList.valueOf(Color.BLACK)
+            progressBackgroundTintList = ColorStateList.valueOf(Color.LTGRAY)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(bar: SeekBar?, index: Int, fromUser: Boolean) {
-                    if (fromUser) { changingSeek = true; info.text = "Εγγραφή ${index + 1} / ${capture?.packets?.size ?: 0}" }
+                override fun onProgressChanged(bar: SeekBar?, position: Int, fromUser: Boolean) {
+                    if (fromUser) {
+                        changingSeek = true
+                        val packets = capture?.packets ?: return
+                        val epoch = seekEpoch(position)
+                        timeLabel.text = "Μετακίνηση: ${formatElapsed(epoch - packets.first().epochSeconds)} / ${formatElapsed(packets.last().epochSeconds - packets.first().epochSeconds)}"
+                    }
                 }
-                override fun onStartTrackingTouch(bar: SeekBar?) { changingSeek = true }
+                override fun onStartTrackingTouch(bar: SeekBar?) { pause(); changingSeek = true }
                 override fun onStopTrackingTouch(bar: SeekBar?) {
+                    val epoch = seekEpoch(seek.progress)
                     changingSeek = false
-                    jumpTo(seek.progress)
+                    val index = checkpoints?.indexAtOrBefore(epoch) ?: 0
+                    jumpTo(index)
                 }
             })
         }
-        root.addView(seek)
-        play = button("▶ Play") { if (playing) pause() else start() }
-        rate = button("1×") {
+        root.addView(seek, LinearLayout.LayoutParams(-1, dp(39)))
+        backwards = button("◀◀", 14f) { startInDirection(-1) }
+        play = button("▶ Play", 11f) { if (playing) pause() else start() }
+        forwards = button("▶▶", 14f) { startInDirection(1) }
+        rate = button("1×", 11f) {
             speed = when (speed) { 1.0 -> 2.0; 2.0 -> 4.0; 4.0 -> 8.0; else -> 1.0 }
             rate.text = "${speed.toInt()}×"
             if (playing) resetClock()
         }
-        root.addView(row(play, rate, button("+1 Frame") { jumpTo(record) }, height = 45))
+        root.addView(row(backwards, play, forwards, rate, height = 43))
+        root.addView(row(
+            button("◀ 1 Frame", 10f) { jumpTo(displayedIndex() - 1) },
+            button("1 Frame ▶", 10f) { jumpTo(displayedIndex() + 1) },
+            button("Reset Zoom", 10f) { radar.resetViewport() }, height = 35
+        ))
         showTab(0)
         ui.post(ticker)
     }
@@ -180,12 +208,9 @@ class MainActivity : Activity() {
     }
 
     private fun chooseFile() {
-        // CSV MIME types differ between Android devices and file providers.
-        // A provider-side EXTRA_MIME_TYPES whitelist can disable valid CSVs.
-        // Open all documents and dispatch by the selected file extension
-        // (CSV / BIN / PCAP / PCAPNG) in the existing onActivityResult handler.
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
+            // File providers report CSV through many MIME types; never hide a valid CSV.
             type = "*/*"
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -251,9 +276,10 @@ class MainActivity : Activity() {
                 val analysis = AircatAnalysis.analyze(loaded)
                 runOnUiThread {
                     capture = loaded
+                    checkpoints = ReplayCheckpoints(loaded.packets)
                     diagnostics = analysis
                     sectorSeconds = ((analysis.medianPeriod ?: 3.956) / 32.0).coerceIn(.02, 5.0)
-                    seek.max = (loaded.packets.size - 1).coerceAtLeast(0)
+                    seek.progress = 0
                     chart.diagnostics = analysis
                     refreshAnalysisPages()
                     progress.visibility = View.GONE
@@ -271,65 +297,112 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun pause() { playing = false; play.text = "▶ Play" }
+    private fun displayedIndex() = (record - 1).coerceAtLeast(0)
+
+    private fun formatElapsed(seconds: Double): String {
+        val whole = seconds.coerceAtLeast(0.0).toLong()
+        val h = whole / 3600
+        val m = whole / 60 % 60
+        val sec = whole % 60
+        return if (h > 0) "%d:%02d:%02d".format(Locale.US, h, m, sec)
+            else "%02d:%02d".format(Locale.US, m, sec)
+    }
+
+    private fun seekEpoch(position: Int): Double {
+        val packets = capture?.packets ?: return 0.0
+        val from = packets.first().epochSeconds
+        val length = (packets.last().epochSeconds - from).coerceAtLeast(0.0)
+        return from + length * position.coerceIn(0, 10000) / 10000.0
+    }
+
+    private fun pause() {
+        playing = false
+        if (::play.isInitialized) play.text = "▶ Play"
+        // No screen clear here: last observed tracks remain visible until Play.
+    }
+
     private fun resetClock() {
         val packets = capture?.packets ?: return
-        if (record >= packets.size) return
-        startTime = packets[record].epochSeconds
+        startTime = packets[displayedIndex().coerceIn(0, packets.lastIndex)].epochSeconds
         clockStart = SystemClock.elapsedRealtime()
     }
+
+    private fun startInDirection(newDirection: Int) {
+        if (capture == null) return
+        if (playing) {
+            // Turn around from the actual visible time, without jumping.
+            direction = newDirection
+            resetClock()
+            play.text = if (direction < 0) "Ⅱ Pause ◀" else "Ⅱ Pause ▶"
+        } else {
+            direction = newDirection
+            start()
+        }
+    }
+
     private fun start() {
         val packets = capture?.packets ?: return
-        if (record >= packets.size) jumpTo(0)
+        if (direction > 0 && displayedIndex() >= packets.lastIndex) jumpTo(0)
+        if (direction < 0 && displayedIndex() <= 0) jumpTo(packets.lastIndex)
+        // Requested persistence: previous presentation is cleared only on Play.
+        // Replay subsequently draws real received targets and refreshes sectors.
+        replay.clearVisibleTargets()
         resetClock()
         playing = true
-        play.text = "Ⅱ Pause"
+        play.text = if (direction < 0) "Ⅱ Pause ◀" else "Ⅱ Pause ▶"
+        radar.invalidate()
     }
-    private fun jumpTo(frame: Int) {
+
+    /** Random access through sparse source checkpoints; reverse stays responsive. */
+    private fun jumpTo(frame: Int, stop: Boolean = true) {
         val packets = capture?.packets ?: return
-        pause()
-        record = frame.coerceIn(0, packets.lastIndex)
-        replay.clear()
-        sectorEpoch = packets.first().epochSeconds
-        for (i in 0..record) {
-            val packet = packets[i]
-            replay.apply(packet)
-            if (packet.sector != null || packet.kind == 0x19) sectorEpoch = packet.epochSeconds
+        if (stop) pause()
+        val index = frame.coerceIn(0, packets.lastIndex)
+        checkpoints?.restore(replay, index) ?: run {
+            replay.clear()
+            for (i in 0..index) replay.apply(packets[i])
         }
-        record++
-        updateSweep(packets[record - 1].epochSeconds)
+        record = index + 1
+        updateSweep(packets[index].epochSeconds)
         refreshFrame()
     }
+
     private val ticker = object : Runnable {
         override fun run() {
             try {
                 val packets = capture?.packets
-                if (playing && packets != null && record < packets.size) {
-                    val target = startTime + (SystemClock.elapsedRealtime() - clockStart) * speed / 1000.0
-                    var n = 0
-                    while (record < packets.size && n < 400 && packets[record].epochSeconds <= target) {
-                        val packet = packets[record++]
-                        replay.apply(packet)
-                        if (packet.sector != null || packet.kind == 0x19) sectorEpoch = packet.epochSeconds
-                        n++
-                    }
-                    if (n > 0) refreshFrame()
-                    updateSweep(target)
-                    if (record >= packets.size) pause()
+                if (playing && packets != null && packets.isNotEmpty()) {
+                    val first = packets.first().epochSeconds
+                    val last = packets.last().epochSeconds
+                    val requested = startTime + direction *
+                        (SystemClock.elapsedRealtime() - clockStart) * speed / 1000.0
+                    val epoch = requested.coerceIn(first, last)
+                    val target = checkpoints?.indexAtOrBefore(epoch) ?: displayedIndex()
+                    if (target != displayedIndex()) jumpTo(target, stop = false)
+                    updateSweep(epoch)
+                    if (requested <= first && direction < 0 || requested >= last && direction > 0) pause()
                 }
             } finally { ui.postDelayed(this, 33) }
         }
     }
+
     private fun updateSweep(epoch: Double) {
         val sec = replay.sector ?: 0
-        val elapsed = (epoch - sectorEpoch).coerceIn(0.0, sectorSeconds)
+        val elapsed = (epoch - replay.sectorEpoch).coerceIn(0.0, sectorSeconds)
         radar.sweepAzimuthDegrees = ((sec + elapsed / sectorSeconds) * 11.25).toFloat()
     }
+
     private fun refreshFrame() {
         val data = capture ?: return
-        val packet = data.packets[(record - 1).coerceIn(0, data.packets.lastIndex)]
-        if (!changingSeek) seek.progress = (record - 1).coerceAtLeast(0)
-        info.text = "${data.name} • $record/${data.summary.packets} • NORTH ${replay.cycle} • Sector ${replay.sector?.toString(16)?.uppercase(Locale.US)?.padStart(2, '0') ?: "--"}"
+        val packets = data.packets
+        val packet = packets[displayedIndex().coerceIn(0, packets.lastIndex)]
+        if (!changingSeek) {
+            val elapsed = packet.epochSeconds - packets.first().epochSeconds
+            val duration = (packets.last().epochSeconds - packets.first().epochSeconds).coerceAtLeast(0.0)
+            seek.progress = if (duration <= 0.0) 0 else (elapsed / duration * 10000).toInt().coerceIn(0, 10000)
+            timeLabel.text = "Χρόνος: ${formatElapsed(elapsed)} / ${formatElapsed(duration)}  •  Frame ${displayedIndex() + 1}/${packets.size}  •  ${if (direction < 0) "◀" else "▶"}"
+        }
+        info.text = "${data.name} • ${displayedIndex() + 1}/${data.summary.packets} • NORTH ${replay.cycle} • Sector ${replay.sector?.toString(16)?.uppercase(Locale.US)?.padStart(2, '0') ?: "--"}"
         if (tab == 1) {
             val hex = packet.payload.take(120).joinToString(" ") { "%02X".format(it.toInt() and 255) }
             val head = diagnostics?.let {
@@ -354,24 +427,103 @@ class MainActivity : Activity() {
 
     private fun chooseFilters() {
         val current = currentFilter
-        val items = arrayOf("PSR (Primary)", "MSSR / SSR", "Low quality", "Cancelled tracks",
-            "Ετικέτες στόχων", "Ίχνη τροχιάς", "Μόνο alerts", "Κρύψε invalid Mode A/C")
-        val values = booleanArrayOf(current.showPSR, current.showMSSR, current.showLowQuality,
-            current.showCancelled, current.showLabels, current.showTrails, current.showOnlyAlerts,
-            current.hideInvalidMode)
-        AlertDialog.Builder(this).setTitle("Radar Filters")
-            .setMultiChoiceItems(items, values) { _, index, chosen -> values[index] = chosen }
-            .setPositiveButton("Εφαρμογή") { _, _ ->
-                currentFilter = RadarFilter(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7])
+        val wrapper = ScrollView(this)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(15), dp(5), dp(15), dp(12))
+        }
+        wrapper.addView(content)
+        val definitions = listOf(
+            "PSR μόνο (○)" to current.showPSR,
+            "MSSR (Δ)" to current.showMSSR,
+            "Combined (U)" to current.showCombined,
+            "Low quality" to current.showLowQuality,
+            "Cancelled tracks" to current.showCancelled,
+            "Ετικέτες στόχων" to current.showLabels,
+            "Track number" to current.showTrackNumber,
+            "Mode A (default)" to current.showModeA,
+            "Mode C / Altitude (default)" to current.showModeC,
+            "Speed label (kt)" to current.showSpeed,
+            "Range label (NM)" to current.showRange,
+            "Quality label" to current.showQuality,
+            "Velocity vectors" to current.showVelocityVectors,
+            "Ίχνη τροχιάς" to current.showTrails,
+            "Μόνο alerts" to current.showOnlyAlerts,
+            "Κρύψε invalid Mode A/C" to current.hideInvalidMode
+        )
+        val checks = definitions.map { (label, initial) ->
+            CheckBox(this).apply {
+                text = label
+                textSize = 13f
+                isChecked = initial
+                content.addView(this)
+            }
+        }
+        content.addView(title("Φίλτρα ύψους / ταχύτητας — κενό σημαίνει χωρίς όριο", 13f))
+        fun field(label: String, value: Int?): EditText {
+            content.addView(title(label, 12f))
+            return EditText(this).apply {
+                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED
+                hint = "—"
+                setSingleLine(true)
+                setText(value?.toString() ?: "")
+                textSize = 14f
+                content.addView(this, LinearLayout.LayoutParams(-1, dp(42)))
+            }
+        }
+        val minAlt = field("Ελάχιστο ύψος (ft)", current.minAltitudeFt)
+        val maxAlt = field("Μέγιστο ύψος (ft)", current.maxAltitudeFt)
+        val minSpeed = field("Ελάχιστη ταχύτητα (kt)", current.minSpeedKt)
+        val maxSpeed = field("Μέγιστη ταχύτητα (kt)", current.maxSpeedKt)
+        val dialog = AlertDialog.Builder(this).setTitle("AIRCAT500 Radar Filters")
+            .setView(wrapper)
+            .setPositiveButton("Εφαρμογή", null)
+            .setNeutralButton("Reset", null)
+            .setNegativeButton("Άκυρο", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                fun parsed(edit: EditText): Int? = edit.text.toString().trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
+                val entered = listOf(minAlt, maxAlt, minSpeed, maxSpeed)
+                if (entered.any { it.text.toString().isNotBlank() && parsed(it) == null }) {
+                    android.widget.Toast.makeText(this,"Τα όρια πρέπει να είναι ακέραιοι αριθμοί.",android.widget.Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
+                val aMin = parsed(minAlt); val aMax = parsed(maxAlt)
+                val vMin = parsed(minSpeed); val vMax = parsed(maxSpeed)
+                if (aMin != null && aMax != null && aMin > aMax ||
+                    vMin != null && vMax != null && vMin > vMax) {
+                    android.widget.Toast.makeText(this,"Το ελάχιστο δεν μπορεί να είναι μεγαλύτερο από το μέγιστο.",android.widget.Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
+                currentFilter = RadarFilter(
+                    showPSR=checks[0].isChecked, showMSSR=checks[1].isChecked,
+                    showCombined=checks[2].isChecked, showLowQuality=checks[3].isChecked,
+                    showCancelled=checks[4].isChecked, showLabels=checks[5].isChecked,
+                    showTrackNumber=checks[6].isChecked, showModeA=checks[7].isChecked,
+                    showModeC=checks[8].isChecked, showSpeed=checks[9].isChecked,
+                    showRange=checks[10].isChecked, showQuality=checks[11].isChecked,
+                    showVelocityVectors=checks[12].isChecked, showTrails=checks[13].isChecked,
+                    showOnlyAlerts=checks[14].isChecked, hideInvalidMode=checks[15].isChecked,
+                    minAltitudeFt=aMin, maxAltitudeFt=aMax,
+                    minSpeedKt=vMin, maxSpeedKt=vMax
+                )
                 radar.filter = currentFilter
-            }.setNegativeButton("Άκυρο", null).show()
+                dialog.dismiss()
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                currentFilter = RadarFilter()
+                radar.filter = currentFilter
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
     }
 
     private fun showTrack(track: RadarTrack) {
         val details = buildString {
             appendLine("Track #${track.number} • ${track.kindLabel}")
             appendLine("X/Y: ${track.xRaw} / ${track.yRaw}  •  Range: %.1f NM".format(Locale.US,track.rangeNm32))
-            appendLine("Mode A: ${track.modeA ?: "n/a"}  •  Mode C: ${track.modeC ?: "n/a"}")
+            appendLine("Mode A: ${track.modeA ?: "n/a"}  •  Mode C / altitude: ${track.modeC ?: "n/a"}")
             appendLine("Quality: ${track.quality ?: "n/a"}  •  Speed: ${track.speedKt ?: "n/a"} kt")
             appendLine("SPI: ${track.spi}  Emergency: ${track.emergency}")
             appendLine("Mode A invalid: ${track.modeAInvalid}  Mode C invalid: ${track.modeCInvalid}")
@@ -389,7 +541,7 @@ class MainActivity : Activity() {
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "text/plain"
-            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_Mobile_v1_report.txt")
+            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_Mobile_v1_1_report.txt")
         }
         startActivityForResult(intent, 78)
     }

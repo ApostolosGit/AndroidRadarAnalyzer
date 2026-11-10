@@ -1,46 +1,28 @@
-# AIRCAT500 Mobile v1.0 (AndroidRadarAnalyzer)
+# AIRCAT500 Mobile v1.1.0 — Android Radar Analyzer
 
-Native Kotlin Android application **based on the verified AIRCAT500 Analyzer v9.16 for Windows** and the tested AIRCAT500 Mobile v0.2 radar playback.
+Native **Kotlin Android** offline radar analyzer based on the AIRCAT500 Windows Python v9.16 decoder and the verified Mobile v0.2 replay UI.
 
-## Features (offline v1.0)
+## What's new in v1.1
 
-- Android document picker loads AIRCAT500 CSV records, CRC-validated raw RS232 SYNC **BSC BIN**, and IPv4 UDP **PCAP/PCAPNG** capture files.
-- Native scrolling/zooming/panning 250 NM radar with smooth recorded-sector interpolation, target labels and alerts, sector sweep, recent target trails, and tap-to-inspect Mode A/C and quality details.
-- Offline autoplay after file import, Play/Pause, 1×/2×/4×/8×, 1-frame steps, and seek through the original timestamps.
-- Monitoring: NORTH, 32 sectors, extension frames, track/CRC summaries and last payload HEX.
-- Errors: NORTH-to-NORTH completed cycles, missing/duplicate/out-of-order sectors, NORTH timing, and **non-additive** total unique faults.
-- Alerts: Mode A 7500/7600/7601/7700, SPI, emergency flag, cancellation, invalid Mode A/C and low quality.
-- Charts: sector traffic, missing sectors, AIRCAT packet types and alert event groups.
-- Filters: PSR/MSSR, low quality, cancelled, labels/trails, alert-only and invalid Mode values.
-- Save combined plain-text analysis report into Android Downloads via system document picker.
+- Light-gray radar screen (#EAEDF0) and black target symbols: **Δ MSSR/SSR**, **U combined PSR+SSR**, **○ PSR-only**.
+- Target annotations show **Mode A and Mode C by default on every drawn target**. Missing fields appear as `----` (not fabricated Mode A/C codes). Also optionally display track number, speed (kt), range (NM), quality and velocity vectors.
+- Target presentation **does not automatically blank on NORTH** and is frozen on **Pause**; the previous display is cleared when **Play** starts/resumes. New sectors refresh their corresponding targets while playback runs. Seeking reconstructs the state at the requested recorded time.
+- True **time-based seek bar**, with elapsed / total capture time. **◀◀** reverses playback and **▶▶** plays forward; Play/Pause, 1/2/4/8x, previous/next-frame and Reset Zoom.
+- **Filters** for separate PSR/MSSR/Combined categories, min/max **altitude (ft)** and min/max **speed (kt)**, plus low-quality, cancellation, invalid Mode A/C, alert, labels, trails, quality/range/speed overlays. Missing Mode C or speed does **not** pass an active numeric filter.
+- Keeps v1.0 offline CSV, RAW BSC BIN, PCAP/PCAPNG imports, Monitor, Errors, Alerts, Charts and report export. The CSV picker remains unrestricted by provider MIME type.
+- Sparse 128-frame snapshots keep reverse playback and random seeking responsive without inventing targets.
 
-**Not included yet:** Live RICI5000/Ethernet and ESP32-S3 Wi-Fi AP streaming, PC Wireshark integration and direct serial COM/USB modes. These need a separate networking / Android USB implementation and appropriate firmware. A mobile offline port cannot reproduce Windows Tkinter UI pixel-for-pixel.
+## Verification
 
-## Safety / interpretation
+The pure Kotlin parser / state / checkpoint regression passed with real captures:
 
-- The recorded CSV contains **CRC-valid payloads only**. CRC-failed BSC frames are absent. CSV CRC counters are optional reader-side snapshots, not independently recomputed CRC checks.
-- Raw BSC BIN can be CRC checked offline (CRC16/KERMIT) and reports real CRC failure counters; its timestamps are **estimated** from a constant input byte rate of 2400 bytes/s (not wall-clock timestamps).
-- Missing sector IDs and suspicious CRC-correlated gaps are distinct diagnostics. Correlation does **not** prove a fault in RADAR cabling or hardware.
-- This is analysis/engineering software, not certified ATC display software. Do not use it for operational flight separation decisions.
-- Real captures are **not committed** to this public repository.
+| Input | Valid packets | Complete NORTH cycles | Missing sector IDs |
+| --- | ---: | ---: | ---: |
+| `AIRCAT500_SYNC2USB_USB_Record_20261108_182516.csv` | 3,203 | 94 | 3 |
+| `AIRCAT500_SYNC2USB_USB_Record_20261108_194459.csv` | 5,340 | 159 | 2 |
 
-## Verification with supplied test captures (private)
+The raw capture files are **not** included in the public GitHub repository.
 
-| Capture | CRC-valid payload rows | NORTH cycles | Valid 32/32 cycles | Missing sector IDs | Unique faults |
-|---|---:|---:|---:|---:|---:|
-| 20261108_182516 CSV | 3,203 | 94 | 91 | 3 | 3 |
-| 20261108_194459 CSV | 5,340 | 159 | 157 | 2 | 2 |
-| Raw USB BIN (98,754 bytes) | 343 BSC CRC OK | 9 | 9 | 0 | 0 |
+Build with Android Studio (API 26+, target SDK 35), or run `gradle :app:testDebugUnitTest :app:assembleDebug` using Gradle 8.11.1 and JDK 17.
 
-Tests are run by the GitHub Actions **Android Debug APK** workflow, including pure Kotlin JUnit tests. Android API 26+, target API 35. Based on the tested v0.2 package `gr.aircat.androidradaranalyzer`, so the signed debug build should install as an update when GitHub uses the same debug signing key, though otherwise Android may require uninstall/reinstall. Android Studio / Gradle 8.11.1, Android SDK 35, Java 17.
-
-## Offline JVM regression (two locally supplied CSVs)
-
-```bash
-kotlinc app/src/main/java/gr/aircat/android/AircatCore.kt \
-  app/src/main/java/gr/aircat/android/AircatAnalysis.kt \
-  app/src/main/java/gr/aircat/android/AircatBsc.kt \
-  app/src/main/java/gr/aircat/android/AircatPcap.kt \
-  OfflineRegression.kt -include-runtime -d offline-regression.jar
-java -jar offline-regression.jar /path/to/first.csv /path/to/second.csv
-```
+This version is **offline**. Live Wi-Fi AP / SYNC2USB, Bluetooth and physical USB acquisition are not included yet. Device compatibility and visual acceptance still require user testing on a physical Android handset.
