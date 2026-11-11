@@ -9,14 +9,23 @@ data class RadarFilter(
     val showPSR: Boolean = true, val showMSSR: Boolean = true,
     val showLowQuality: Boolean = true, val showCancelled: Boolean = true,
     val showLabels: Boolean = true, val showTrails: Boolean = true,
-    val showOnlyAlerts: Boolean = false, val hideInvalidMode: Boolean = false
+    val showOnlyAlerts: Boolean = false, val hideInvalidMode: Boolean = false,
+    val minAltitudeFeet: Int? = null, val maxAltitudeFeet: Int? = null,
+    val minSpeedKt: Int? = null, val maxSpeedKt: Int? = null
 ) {
-    fun allows(track: RadarTrack): Boolean =
-        (if (track.primary) showPSR else showMSSR) &&
-        (showLowQuality || !track.isLowQuality) &&
-        (showCancelled || !track.cancelled) &&
-        (!showOnlyAlerts || track.alert) &&
-        (!hideInvalidMode || !(track.modeAInvalid || track.modeCInvalid))
+    fun allows(track: RadarTrack): Boolean {
+        val altitude = track.modeC?.removeSuffix("ft")?.toIntOrNull()
+        val speed = track.speedKt
+        return (if (track.primary) showPSR else showMSSR) &&
+            (showLowQuality || !track.isLowQuality) &&
+            (showCancelled || !track.cancelled) &&
+            (!showOnlyAlerts || track.alert) &&
+            (!hideInvalidMode || !(track.modeAInvalid || track.modeCInvalid)) &&
+            (minAltitudeFeet == null || (altitude != null && altitude >= minAltitudeFeet)) &&
+            (maxAltitudeFeet == null || (altitude != null && altitude <= maxAltitudeFeet)) &&
+            (minSpeedKt == null || (speed != null && speed >= minSpeedKt)) &&
+            (maxSpeedKt == null || (speed != null && speed <= maxSpeedKt))
+    }
 }
 
 /** Independent offline diagnostics. The same sector ID is NOT counted twice because the North cycle is invalid. */
