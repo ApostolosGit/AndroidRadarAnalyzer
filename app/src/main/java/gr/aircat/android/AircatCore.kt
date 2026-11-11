@@ -289,7 +289,7 @@ object AircatCsv {
 class RadarReplayState {
     val tracksBySector = HashMap<Int, List<RadarTrack>>()
     val trackTrail = HashMap<Int, ArrayDeque<RadarTrack>>()
-    var trailDepth = 6
+    var trailDepth = 16
     var sector: Int? = null
     var cycle = 0
     var packetsShown = 0
@@ -332,4 +332,44 @@ class RadarReplayState {
         }
     }
     fun allTracks(): List<RadarTrack> = tracksBySector.values.flatten()
+}
+
+/** Replay positions are real capture timestamps, not an evenly spaced frame number. */
+object ReplayTimeline {
+    const val STEPS = 10000
+    fun indexAtOrBefore(packets: List<RadarPacket>, epochSeconds: Double): Int {
+        if (packets.isEmpty()) return 0
+        var lo = 0
+        var hi = packets.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (packets[mid].epochSeconds <= epochSeconds) lo = mid + 1 else hi = mid
+        }
+        return (lo - 1).coerceIn(0, packets.lastIndex)
+    }
+    fun position(epoch: Double, first: Double, last: Double): Int {
+        if (last <= first) return 0
+        return (((epoch - first) / (last - first)) * STEPS).toInt().coerceIn(0, STEPS)
+    }
+    fun epoch(position: Int, first: Double, last: Double): Double {
+        if (last <= first) return first
+        return first + position.coerceIn(0, STEPS).toDouble() / STEPS * (last - first)
+    }
+}
+
+/** Range-ring geometry in nautical miles; model remains correct with panned origin. */
+object RadarRangeGrid {
+    fun spacingNm(displayRangeNm: Double): Int = when {
+        displayRangeNm <= 5.0 -> 1
+        displayRangeNm <= 30.0 -> 5
+        displayRangeNm <= 60.0 -> 10
+        displayRangeNm <= 125.0 -> 25
+        else -> 50
+    }
+    fun rings(displayRangeNm: Double, farthestVisibleRangeNm: Double): List<Int> {
+        val step = spacingNm(displayRangeNm)
+        val n = (kotlin.math.ceil(farthestVisibleRangeNm / step).toInt() + 1)
+            .coerceIn(0, 200)
+        return (1..n).map { it * step }
+    }
 }
