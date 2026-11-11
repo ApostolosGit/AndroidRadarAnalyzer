@@ -299,53 +299,86 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun pause() { playing = false; play.text = "▶ Play" }
+    private fun pause() {
+        playing = false
+        play.text = "▶ Play"
+        // Deliberately leave radar targets, trails and current sweep untouched.
+    }
+
     private fun resetClock() {
         val packets = capture?.packets ?: return
-        if (record >= packets.size) return
-        startTime = packets[record].epochSeconds
+        if (packets.isEmpty()) return
+        val index = if (replayDirection < 0) (record - 1).coerceIn(0, packets.lastIndex)
+                    else record.coerceIn(0, packets.lastIndex)
+        startTime = packets[index].epochSeconds
         clockStart = SystemClock.elapsedRealtime()
     }
+
     private fun start() {
         val packets = capture?.packets ?: return
-        if (record >= packets.size) jumpTo(0)
+        if (packets.isEmpty()) return
+        if (replayDirection < 0 && record <= 1) jumpTo(packets.lastIndex)
+        if (replayDirection > 0 && record >= packets.size) jumpTo(0)
         resetClock()
         playing = true
         play.text = "Ⅱ Pause"
+        reverseButton.alpha = if (replayDirection < 0) 1f else .65f
+        forwardButton.alpha = if (replayDirection > 0) 1f else .65f
     }
-    private fun jumpTo(frame: Int) {
+
+    private fun jumpTo(frame: Int, stop: Boolean = true) {
         val packets = capture?.packets ?: return
-        pause()
-        record = frame.coerceIn(0, packets.lastIndex)
+        if (packets.isEmpty()) return
+        if (stop) pause()
+        val target = frame.coerceIn(0, packets.lastIndex)
+        // A bounded recent-NORTH rebuild preserves up to 16+ track history
+        // points without reprocessing an entire multi-hour recording per tick.
+        val match = northIndexes.binarySearch(target)
+        val lastNorth = if (match >= 0) match else -match - 2
+        val firstNorth = (lastNorth - 8).coerceAtLeast(0)
+        val fromIndex = if (lastNorth >= 0) northIndexes[firstNorth] else 0
         replay.clear()
-        sectorEpoch = packets.first().epochSeconds
-        for (i in 0..record) {
+        replay.cycle = if (lastNorth >= 0) firstNorth else 0
+        sectorEpoch = packets[fromIndex].epochSeconds
+        for (i in fromIndex..target) {
             val packet = packets[i]
             replay.apply(packet)
             if (packet.sector != null || packet.kind == 0x19) sectorEpoch = packet.epochSeconds
         }
-        record++
-        updateSweep(packets[record - 1].epochSeconds)
+        record = target + 1
+        updateSweep(packets[target].epochSeconds)
         refreshFrame()
     }
+
     private val ticker = object : Runnable {
         override fun run() {
             try {
                 val packets = capture?.packets
-                if (playing && packets != null && record < packets.size) {
-                    val target = startTime + (SystemClock.elapsedRealtime() - clockStart) * speed / 1000.0
-                    var n = 0
-                    while (record < packets.size && n < 400 && packets[record].epochSeconds <= target) {
-                        val packet = packets[record++]
-                        replay.apply(packet)
-                        if (packet.sector != null || packet.kind == 0x19) sectorEpoch = packet.epochSeconds
-                        n++
+                if (playing && packets != null && packets.isNotEmpty()) {
+                    val targetEpoch = startTime +
+                        (SystemClock.elapsedRealtime() - clockStart) * speed * replayDirection / 1000.0
+                    if (replayDirection > 0) {
+                        var updates = 0
+                        while (record < packets.size && updates < 400 &&
+                            packets[record].epochSeconds <= targetEpoch) {
+                            val packet = packets[record++]
+                            replay.apply(packet)
+                            if (packet.sector != null || packet.kind == 0x19) sectorEpoch = packet.epochSeconds
+                            updates++
+                        }
+                        if (updates > 0) refreshFrame()
+                        updateSweep(targetEpoch)
+                        if (record >= packets.size) pause()
+                    } else {
+                        val at = ReplayTimeline.indexAtOrBefore(packets, targetEpoch)
+                        if (at < record - 1) jumpTo(at, stop = false)
+                        updateSweep(targetEpoch)
+                        if (targetEpoch <= packets.first().epochSeconds) pause()
                     }
-                    if (n > 0) refreshFrame()
-                    updateSweep(target)
-                    if (record >= packets.size) pause()
                 }
-            } finally { ui.postDelayed(this, 33) }
+            } finally {
+                ui.postDelayed(this, 33)
+            }
         }
     }
     private fun updateSweep(epoch: Double) {
@@ -353,10 +386,32 @@ class MainActivity : Activity() {
         val elapsed = (epoch - sectorEpoch).coerceIn(0.0, sectorSeconds)
         radar.sweepAzimuthDegrees = ((sec + elapsed / sectorSeconds) * 11.25).toFloat()
     }
+    private fun elapsedText(seconds: Double): String {
+        val total = seconds.coerceAtLeast(0.0).toLong()
+        val h = total / 3600L
+        val m = (total % 3600L) / 60L
+        val sec = total % 60L
+        return if (h > 0) "%d:%02d:%02d".format(Locale.US, h, m, sec)
+               else "%02d:%02d".format(Locale.US, m, sec)
+    }
+
+    private fun updateTimelineLabel(epoch: Double) {
+        val packets = capture?.packets ?: return
+        if (packets.isEmpty()) return
+        val first = packets.first().epochSeconds
+        val last = packets.last().epochSeconds
+        timelineLabel.text = "Χρόνος Replay  ${elapsedText(epoch - first)} / ${elapsedText(last - first)}" +
+            "   ${if (replayDirection < 0) "<<" else ">>"}  ${speed.toInt()}×"
+    }
+
     private fun refreshFrame() {
         val data = capture ?: return
         val packet = data.packets[(record - 1).coerceIn(0, data.packets.lastIndex)]
-        if (!changingSeek) seek.progress = (record - 1).coerceAtLeast(0)
+        if (!changingSeek) {
+            seek.progress = ReplayTimeline.position(packet.epochSeconds,
+                data.packets.first().epochSeconds, data.packets.last().epochSeconds)
+            updateTimelineLabel(packet.epochSeconds)
+        }
         info.text = "${data.name} • $record/${data.summary.packets} • NORTH ${replay.cycle} • Sector ${replay.sector?.toString(16)?.uppercase(Locale.US)?.padStart(2, '0') ?: "--"}"
         if (tab == 1) {
             val hex = packet.payload.take(120).joinToString(" ") { "%02X".format(it.toInt() and 255) }
