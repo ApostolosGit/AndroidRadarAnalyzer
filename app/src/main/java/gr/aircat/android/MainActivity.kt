@@ -13,7 +13,10 @@ import android.os.SystemClock
 import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.text.InputType
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -436,24 +439,96 @@ class MainActivity : Activity() {
     }
 
     private fun chooseFilters() {
-        val current = currentFilter
-        val items = arrayOf("PSR (Primary)", "MSSR / SSR", "Low quality", "Cancelled tracks",
-            "Ετικέτες στόχων", "Ίχνη τροχιάς", "Μόνο alerts", "Κρύψε invalid Mode A/C")
-        val values = booleanArrayOf(current.showPSR, current.showMSSR, current.showLowQuality,
-            current.showCancelled, current.showLabels, current.showTrails, current.showOnlyAlerts,
-            current.hideInvalidMode)
+        val previous = currentFilter
+        val labels = listOf("PSR (Primary)", "MSSR / SSR", "Low quality",
+            "Cancelled tracks", "Ετικέτες Mode A/C", "Ίχνη τροχιάς",
+            "Μόνο alerts", "Κρύψε invalid Mode A/C", "Range NM στις ετικέτες")
+        val initial = listOf(previous.showPSR, previous.showMSSR, previous.showLowQuality,
+            previous.showCancelled, previous.showLabels, previous.showTrails,
+            previous.showOnlyAlerts, previous.hideInvalidMode, previous.showRangeLabel)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(8), dp(18), dp(8))
+        }
+        val checks = labels.indices.map { i ->
+            CheckBox(this).apply {
+                text = labels[i]
+                isChecked = initial[i]
+                textSize = 13f
+                content.addView(this, LinearLayout.LayoutParams(-1, dp(38)))
+            }
+        }
+        val historyText = title("Ίχνη ιστορικού ανά στόχο: ${replay.trailDepth}", 12f)
+        content.addView(historyText)
+        val history = SeekBar(this).apply {
+            max = 64
+            if (Build.VERSION.SDK_INT >= 26) min = 2
+            progress = replay.trailDepth
+            isEnabled = checks[5].isChecked
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                    historyText.text = "Ίχνη ιστορικού ανά στόχο: ${value.coerceAtLeast(2)}"
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+        }
+        checks[5].setOnCheckedChangeListener { _, enabled -> history.isEnabled = enabled }
+        content.addView(history)
+        content.addView(title("Φίλτρα Mode C (feet) και ταχύτητας (kt)", 12f))
+        fun numberInput(hint: String, existing: Int?): EditText {
+            return EditText(this).apply {
+                this.hint = hint
+                setSingleLine(true)
+                textSize = 13f
+                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED
+                setText(existing?.toString() ?: "")
+                content.addView(this, LinearLayout.LayoutParams(-1, dp(48)))
+            }
+        }
+        val altMin = numberInput("Ελάχιστο ύψος ft (κενό = χωρίς όριο)", previous.minAltitudeFeet)
+        val altMax = numberInput("Μέγιστο ύψος ft (κενό = χωρίς όριο)", previous.maxAltitudeFeet)
+        val speedMin = numberInput("Ελάχιστη ταχύτητα kt (κενό = χωρίς όριο)", previous.minSpeedKt)
+        val speedMax = numberInput("Μέγιστη ταχύτητα kt (κενό = χωρίς όριο)", previous.maxSpeedKt)
+        val scroll = ScrollView(this).apply { addView(content) }
         AlertDialog.Builder(this).setTitle("Radar Filters")
-            .setMultiChoiceItems(items, values) { _, index, chosen -> values[index] = chosen }
+            .setView(scroll)
             .setPositiveButton("Εφαρμογή") { _, _ ->
-                currentFilter = RadarFilter(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7])
-                radar.filter = currentFilter
-            }.setNegativeButton("Άκυρο", null).show()
+                fun readInt(input: EditText) = input.text.toString().trim().toIntOrNull()
+                val minAlt = readInt(altMin)
+                val maxAlt = readInt(altMax)
+                val minSpd = readInt(speedMin)
+                val maxSpd = readInt(speedMax)
+                if ((minAlt != null && maxAlt != null && minAlt > maxAlt) ||
+                    (minSpd != null && maxSpd != null && minSpd > maxSpd)) {
+                    android.widget.Toast.makeText(this, "Ελάχιστο όριο μεγαλύτερο από μέγιστο", android.widget.Toast.LENGTH_LONG).show()
+                } else {
+                    currentFilter = RadarFilter(
+                        checks[0].isChecked, checks[1].isChecked, checks[2].isChecked,
+                        checks[3].isChecked, checks[4].isChecked, checks[5].isChecked,
+                        checks[6].isChecked, checks[7].isChecked,
+                        minAlt, maxAlt, minSpd, maxSpd, checks[8].isChecked
+                    )
+                    radar.filter = currentFilter
+                    val newDepth = history.progress.coerceIn(2, 64)
+                    if (newDepth != replay.trailDepth) {
+                        replay.trailDepth = newDepth
+                        if (capture != null && record > 0) {
+                            val wasPlaying = playing
+                            jumpTo(record-1, stop = !wasPlaying)
+                            if (wasPlaying) resetClock()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("Άκυρο", null)
+            .show()
     }
 
     private fun showTrack(track: RadarTrack) {
         val details = buildString {
             appendLine("Track #${track.number} • ${track.kindLabel}")
-            appendLine("X/Y: ${track.xRaw} / ${track.yRaw}  •  Range: %.1f NM".format(Locale.US,track.rangeNm32))
+            appendLine("X/Y: ${track.xRaw} / ${track.yRaw}")
             appendLine("Mode A: ${track.modeA ?: "n/a"}  •  Mode C: ${track.modeC ?: "n/a"}")
             appendLine("Quality: ${track.quality ?: "n/a"}  •  Speed: ${track.speedKt ?: "n/a"} kt")
             appendLine("SPI: ${track.spi}  Emergency: ${track.emergency}")
