@@ -32,6 +32,8 @@ class MainActivity : Activity() {
     private var record = 0
     private var playing = false
     private var speed = 1.0
+    private var replayDirection = 1 // +1 forward, -1 backward
+    private var northIndexes = IntArray(0)
     private var startTime = 0.0
     private var clockStart = 0L
     private var sectorEpoch = 0.0
@@ -52,6 +54,9 @@ class MainActivity : Activity() {
     private lateinit var seek: SeekBar
     private lateinit var play: Button
     private lateinit var rate: Button
+    private lateinit var reverseButton: Button
+    private lateinit var forwardButton: Button
+    private lateinit var timelineLabel: TextView
     private lateinit var chartModeButton: Button
     private lateinit var showViews: Array<View>
     private lateinit var tabButtons: Array<Button>
@@ -106,7 +111,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v1.0", 17f))
+        root.addView(title("AIRCAT500 Mobile  v1.0.2", 17f))
         val open = button("Άνοιγμα", 11f) { chooseFile() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 11f) { exportReport() }
@@ -145,27 +150,48 @@ class MainActivity : Activity() {
             chartModeButton.text = listOf("SECTOR PACKETS  ▾", "MISSING SECTORS  ▾", "AIRCAT TYPES  ▾", "ALERTS  ▾")[chartMode]
         }
         root.addView(chartModeButton, LinearLayout.LayoutParams(-1, dp(35)))
+        timelineLabel = title("Χρόνος Replay  00:00 / 00:00", 11f)
+        root.addView(timelineLabel)
         seek = SeekBar(this).apply {
-            max = 0
+            max = ReplayTimeline.STEPS
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(bar: SeekBar?, index: Int, fromUser: Boolean) {
-                    if (fromUser) { changingSeek = true; info.text = "Εγγραφή ${index + 1} / ${capture?.packets?.size ?: 0}" }
+                override fun onProgressChanged(bar: SeekBar?, position: Int, fromUser: Boolean) {
+                    if (fromUser) {
+                        changingSeek = true
+                        val packets = capture?.packets ?: return
+                        val epoch = ReplayTimeline.epoch(position, packets.first().epochSeconds, packets.last().epochSeconds)
+                        updateTimelineLabel(epoch)
+                    }
                 }
-                override fun onStartTrackingTouch(bar: SeekBar?) { changingSeek = true }
+                override fun onStartTrackingTouch(bar: SeekBar?) {
+                    changingSeek = true
+                    pause() // Freeze displayed targets while moving the time cursor.
+                }
                 override fun onStopTrackingTouch(bar: SeekBar?) {
+                    val packets = capture?.packets ?: return
+                    val epoch = ReplayTimeline.epoch(seek.progress, packets.first().epochSeconds, packets.last().epochSeconds)
                     changingSeek = false
-                    jumpTo(seek.progress)
+                    jumpTo(ReplayTimeline.indexAtOrBefore(packets, epoch))
                 }
             })
         }
         root.addView(seek)
+        reverseButton = button("<<", 11f) { replayDirection = -1; start() }
         play = button("▶ Play") { if (playing) pause() else start() }
+        forwardButton = button(">>", 11f) { replayDirection = 1; start() }
         rate = button("1×") {
-            speed = when (speed) { 1.0 -> 2.0; 2.0 -> 4.0; 4.0 -> 8.0; else -> 1.0 }
+            speed = when (speed) {
+                1.0 -> 2.0
+                2.0 -> 4.0
+                4.0 -> 8.0
+                8.0 -> 16.0
+                else -> 1.0
+            }
             rate.text = "${speed.toInt()}×"
             if (playing) resetClock()
         }
-        root.addView(row(play, rate, button("+1 Frame") { jumpTo(record) }, height = 45))
+        root.addView(row(reverseButton, play, forwardButton, rate,
+            button("+1") { jumpTo(record) }, height = 45))
         showTab(0)
         ui.post(ticker)
     }
@@ -253,7 +279,9 @@ class MainActivity : Activity() {
                     capture = loaded
                     diagnostics = analysis
                     sectorSeconds = ((analysis.medianPeriod ?: 3.956) / 32.0).coerceIn(.02, 5.0)
-                    seek.max = (loaded.packets.size - 1).coerceAtLeast(0)
+                    seek.max = ReplayTimeline.STEPS
+                    northIndexes = loaded.packets.indices.filter { loaded.packets[it].kind == 0x19 }.toIntArray()
+                    replayDirection = 1
                     chart.diagnostics = analysis
                     refreshAnalysisPages()
                     progress.visibility = View.GONE
