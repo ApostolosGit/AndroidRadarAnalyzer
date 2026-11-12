@@ -1,0 +1,60 @@
+name: Android Debug APK
+on:
+  push:
+    branches: [main, feature/offline-csv-replay-android, feature/mobile-v1-desktop-port, feature/mobile-v1-0-2-radar-replay]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  android-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Import verified v1 Kotlin source when staged
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f .github/aircat_v1_sources.b64 ]; then
+            test "$(find .github/v1parts -name 'part-*.b64' | wc -l)" -eq 8
+            cat .github/v1parts/part-*.b64 | base64 --decode > /tmp/aircat-v1.tar.xz
+            echo '7fab5aec624fe254a71231bf441d36a8944502c32142a96bd6f2e14fb098eb31  /tmp/aircat-v1.tar.xz' | sha256sum --check
+            tar -xJf /tmp/aircat-v1.tar.xz
+            # Android SDK compile fixes verified against the user-supplied Python port.
+            sed -i 's/^        fillViewport = true$/        isFillViewport = true/' app/src/main/java/gr/aircat/android/MainActivity.kt
+            sed -i 's/^            filter = currentFilter$/            this.filter = currentFilter/' app/src/main/java/gr/aircat/android/MainActivity.kt
+            grep -q 'isFillViewport = true' app/src/main/java/gr/aircat/android/MainActivity.kt
+            grep -q 'this.filter = currentFilter' app/src/main/java/gr/aircat/android/MainActivity.kt
+            rm .github/aircat_v1_sources.b64
+            rm -rf .github/v1parts
+          fi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4
+      - name: Install Android SDK 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Unit tests and APK
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon
+      - name: Commit verified v1 source after successful build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/mobile-v1-desktop-port'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A README.md app/build.gradle.kts app/src/main/java/gr/aircat/android app/src/test/java/gr/aircat/android .github/v1parts .github/aircat_v1_sources.b64
+            git commit -m "AIRCAT500 Mobile v1.0: validated Kotlin Android port"
+            git push origin HEAD:feature/mobile-v1-desktop-port
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIRCAT500-Mobile-v1-0-2-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
