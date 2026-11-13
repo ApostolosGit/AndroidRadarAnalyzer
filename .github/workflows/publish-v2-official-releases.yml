@@ -92,19 +92,20 @@ jobs:
           $details
 
           **Downloads**
-          - `$expected_apk` — Android APK.
-          - `$expected_source` — matching Android Studio source project.
-          - `SHA256SUMS.txt` — checksums of both files.
+          - $expected_apk — Android APK.
+          - $expected_source — matching Android Studio source project.
+          - SHA256SUMS.txt — checksums of both files.
 
           **Provenance**
           - Green GitHub Actions build: https://github.com/$GH_REPO/actions/runs/$run_id
-          - Release tag points to exact tested commit: `$tested_commit`.
+          - Release tag points to exact tested commit: $tested_commit.
 
           **Important:** This is a CI-built **debug-signed APK**, distributed as a permanent GitHub Release. It is not a production-signed Android application or an operational air traffic control system. Functional acceptance on a physical Android handset is separate from successful CI tests.
           EOF
 
             if gh release view "$tag" >/dev/null 2>&1; then
-              echo "Release $tag already exists; skip to avoid overwriting official assets"
+              echo "Release $tag exists; refresh notes without replacing the verified assets"
+              gh release edit "$tag" --title "AIRCAT500 Mobile v$version" --notes-file "$work/ready/RELEASE_NOTES.md"
             else
               # Reject a pre-existing tag pointing at a different revision.
               if tag_sha="$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq .object.sha 2>/dev/null)"; then
