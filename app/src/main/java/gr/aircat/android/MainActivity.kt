@@ -55,7 +55,7 @@ class MainActivity : Activity() {
     private var maxRangeNm = 250f
     private var aircraftLabelSp = 9f
     private var uiTextSp = 13f
-    private val scalableText = ArrayList<TextView>()
+    private val scalableText = ArrayList<java.lang.ref.WeakReference<TextView>>()
     private var pauseOnErrors = false
     private var errorNorthTimes: Set<Double> = emptySet()
 
@@ -86,7 +86,7 @@ class MainActivity : Activity() {
     private fun title(text: String, size: Float = 12f) = TextView(this).apply {
         this.text = text
         textSize = uiTextSp
-        scalableText.add(this)
+        scalableText.add(java.lang.ref.WeakReference(this))
         setTextColor(fg)
         setPadding(dp(7), dp(4), dp(7), dp(4))
         maxLines = 3
@@ -94,7 +94,7 @@ class MainActivity : Activity() {
     private fun button(text: String, size: Float = 11f, onTap: () -> Unit) = Button(this).apply {
         this.text = text
         textSize = uiTextSp
-        scalableText.add(this)
+        scalableText.add(java.lang.ref.WeakReference(this))
         isAllCaps = false
         minWidth = 0
         minimumWidth = 0
@@ -424,7 +424,8 @@ class MainActivity : Activity() {
         progressText.visibility = View.GONE
     }
     private fun applyUiFontSize() {
-        for (label in scalableText) label.textSize = uiTextSp
+        for (label in scalableText) label.get()?.textSize = uiTextSp
+        scalableText.removeAll { it.get() == null }
         if (::radar.isInitialized) radar.uiFontSp = uiTextSp
         if (::chart.isInitialized) chart.uiFontSp = uiTextSp
         // Android dialogs are populated using uiTextSp when opened.
