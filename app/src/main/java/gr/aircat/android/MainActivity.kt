@@ -636,14 +636,112 @@ class MainActivity : Activity() {
             .setPositiveButton("OK", null).show()
     }
 
+    private fun showSettings() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(19), dp(10), dp(19), dp(12))
+        }
+        val titleRange = title("Μέγιστη κλίμακα RADAR (NM) • αρχική 20 NM", 12f)
+        layout.addView(titleRange)
+        val range = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setSingleLine()
+            setText(maxRangeNm.toInt().toString())
+            hint = "250"
+        }
+        layout.addView(range, LinearLayout.LayoutParams(-1, dp(49)))
+        val currentSize = aircraftLabelSp.toInt()
+        val sizeText = title("Μέγεθος γραμμάτων στόχων: ${currentSize} sp", 12f)
+        layout.addView(sizeText)
+        val sizes = SeekBar(this).apply {
+            max = 20
+            if (Build.VERSION.SDK_INT >= 26) min = 7
+            progress = currentSize
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, size: Int, fromUser: Boolean) {
+                    sizeText.text = "Μέγεθος γραμμάτων στόχων: ${size.coerceIn(7,20)} sp"
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+        }
+        layout.addView(sizes)
+        layout.addView(title("Ανοιχτό γκρι RADAR • κόκκινοι δακτύλιοι • αρχική κλίμακα 20 NM",11f))
+        AlertDialog.Builder(this)
+            .setTitle("Ρυθμίσεις AIRCAT500")
+            .setView(layout)
+            .setPositiveButton("Εφαρμογή") { _, _ ->
+                val rangeNm = (range.text.toString().toFloatOrNull() ?: 250f).coerceIn(20f,1000f)
+                maxRangeNm = rangeNm
+                aircraftLabelSp = sizes.progress.toFloat().coerceIn(7f,20f)
+                radar.maxRangeNm = rangeNm
+                radar.labelSizeSp = aircraftLabelSp
+                getSharedPreferences("aircat_v2_settings",MODE_PRIVATE).edit()
+                    .putFloat("max_range_nm",maxRangeNm)
+                    .putFloat("label_size_sp",aircraftLabelSp).apply()
+            }
+            .setNeutralButton("About") { _, _ -> showAbout() }
+            .setNegativeButton("Άκυρο",null)
+            .show()
+    }
+
+    private fun showAbout() {
+        val version = packageManager.getPackageInfo(packageName,0).versionName
+        AlertDialog.Builder(this).setTitle("About AIRCAT500 Mobile")
+            .setMessage("AIRCAT500 Mobile v$version\n" +
+                "Android offline radar analysis & replay\n" +
+                "Decoder: AIRCAT500 BSC / CSV / BIN / PCAP / PCAPNG\n" +
+                "Radar: 20 NM initial, configurable max 250 NM\n" +
+                "Desktop reference: Python Analyzer v9.16\n" +
+                "SYNC2USB live Wi-Fi/USB: not included in this build.\n" +
+                "Version v2.0 uses capture-derived statistics; unavailable Python statistics are not invented.")
+            .setPositiveButton("OK",null).show()
+    }
+
+    private fun showReport() {
+        val report = lastFullReport ?: run {
+            info.text = "Άνοιξε πρώτα αρχείο καταγραφής για πλήρη ανάλυση."
+            return
+        }
+        val text = TextView(this).apply {
+            setText(report)
+            textSize=11f
+            setTextColor(fg)
+            setTextIsSelectable(true)
+            setPadding(dp(14),dp(14),dp(14),dp(14))
+        }
+        val scroll = ScrollView(this).apply {
+            setBackgroundColor(Color.rgb(249,252,254))
+            addView(text)
+        }
+        AlertDialog.Builder(this).setTitle("AIRCAT500 v2 — Αναλυτικό Report")
+            .setView(scroll)
+            .setPositiveButton("Κλείσιμο",null)
+            .setNeutralButton("Αποθήκευση") { _,_ -> exportReport() }
+            .setNegativeButton("Share / Viber") { _,_ -> shareReport() }
+            .show()
+    }
+
+    private fun shareReport() {
+        val report = lastFullReport ?: return
+        // Android's sharesheet includes Viber when installed and registered.
+        // Do not hard-code a package: it would fail on devices without Viber.
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT,report)
+            putExtra(Intent.EXTRA_SUBJECT,"AIRCAT500 Mobile v2 report")
+        }
+        startActivity(Intent.createChooser(send,"Κοινοποίηση μέσω Viber ή άλλης εφαρμογής"))
+    }
+
     private fun exportReport() {
         val data = capture ?: run { info.text = "Άνοιξε πρώτα μια καταγραφή."; return }
-        val stats = diagnostics ?: return
-        pendingReport = AircatReport.create(data,stats) + "\n\n" + AircatReport.errors(stats) + "\n\n" + AircatReport.alerts(stats)
+        pendingReport = lastFullReport ?: diagnostics?.let { AircatDesktopSummary.report(data,it) }
+            ?: return
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "text/plain"
-            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_Mobile_v1_report.txt")
+            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_v2_Analytical_Report.txt")
         }
         startActivityForResult(intent, 78)
     }
