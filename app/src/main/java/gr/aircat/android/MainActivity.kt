@@ -50,6 +50,8 @@ class MainActivity : Activity() {
     private var currentFilter = RadarFilter()
     private var pendingReport: String? = null
     private var lastFullReport: String? = null
+    private var lastErrorSummary: String? = null
+    private var lastAlertSummary: String? = null
     private var maxRangeNm = 250f
     private var aircraftLabelSp = 9f
 
@@ -272,21 +274,53 @@ class MainActivity : Activity() {
         }
         if (requestCode != 77) return
         pause()
-        progress.visibility = View.VISIBLE
-        info.text = "Ανάγνωση AIRCAT500 αρχείου..."
+        setLoadProgress(0,"Έναρξη φόρτωσης...")
         worker.execute {
             try {
                 val rawName = android.provider.OpenableColumns.DISPLAY_NAME
                 var filename = uri.lastPathSegment?.substringAfterLast('/') ?: "capture.dat"
-                contentResolver.query(uri, arrayOf(rawName), null, null, null)?.use {
-                    if (it.moveToFirst()) filename = it.getString(0) ?: filename
+                var totalBytes = -1L
+                contentResolver.query(uri, arrayOf(rawName, android.provider.OpenableColumns.SIZE),
+                    null, null, null)?.use {
+                    if (it.moveToFirst()) {
+                        filename = it.getString(0) ?: filename
+                        if (!it.isNull(1)) totalBytes = it.getLong(1)
+                    }
+                }
+                val expectedBytes = totalBytes
+                fun loadInput(): InputStream {
+                    val stream = contentResolver.openInputStream(uri)
+                        ?: error("Δεν μπορεί να ανοιχθεί το αρχείο")
+                    var seen = 0L
+                    var lastPct = -1
+                    return object : FilterInputStream(stream) {
+                        private fun counted(n: Int) {
+                            if (n <= 0 || expectedBytes <= 0) return
+                            seen += n.toLong()
+                            val pct = (75L * seen / expectedBytes).toInt().coerceIn(0,75)
+                            if (pct != lastPct) {
+                                lastPct=pct
+                                setLoadProgress(pct,"Ανάγνωση αρχείου: ${(seen * 100L / expectedBytes).coerceIn(0,100)}%")
+                            }
+                        }
+                        override fun read(): Int {
+                            val value=super.read()
+                            if (value>=0) counted(1)
+                            return value
+                        }
+                        override fun read(b: ByteArray, off: Int, len: Int): Int {
+                            val n=super.read(b,off,len)
+                            counted(n)
+                            return n
+                        }
+                    }
                 }
                 val ext = filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
                 val loaded: RadarCapture
                 val sourceNote: String
                 when (ext) {
                     "bin" -> {
-                        val raw = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        val raw = loadInput().use { it.readBytes() }
                             ?: error("Δεν μπορεί να διαβαστεί το BIN")
                         require(raw.size <= 60 * 1024 * 1024) { "BIN υπερβαίνει το όριο 60 MB" }
                         val result = AircatBsc.import(raw, filename)
@@ -294,7 +328,7 @@ class MainActivity : Activity() {
                         sourceNote = "BSC CRC: ${result.status.valid} OK / ${result.status.crcFailed} FAIL"
                     }
                     "pcap", "pcapng" -> {
-                        val raw = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        val raw = loadInput().use { it.readBytes() }
                             ?: error("Δεν μπορεί να διαβαστεί το PCAP")
                         require(raw.size <= 60 * 1024 * 1024) { "PCAP υπερβαίνει το όριο 60 MB" }
                         val result = AircatPcap.import(raw, filename)
@@ -302,13 +336,21 @@ class MainActivity : Activity() {
                         sourceNote = "UDP: ${result.udpPackets} / ${result.inspectedPackets} frames"
                     }
                     else -> {
-                        loaded = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use {
+                        loaded = loadInput().bufferedReader(Charsets.UTF_8).use {
                             AircatCsv.read(it, filename)
                         } ?: error("Το CSV δεν είναι διαθέσιμο")
                         sourceNote = "CSV CRC-valid payloads"
                     }
                 }
+                setLoadProgress(78,"Ανάλυση NORTH / sectors / CRC...")
                 val analysis = AircatAnalysis.analyze(loaded)
+                setLoadProgress(89,"Σύνοψη Errors / Alerts και Charts...")
+                val bars = AircatDesktopSummary.sectorBars(loaded,analysis)
+                val errorSummary = AircatDesktopSummary.errors(loaded,analysis)
+                val alertSummary = AircatDesktopSummary.alerts(loaded,analysis)
+                setLoadProgress(95,"Δημιουργία αναλυτικού Report...")
+                val full = AircatDesktopSummary.report(loaded,analysis)
+                setLoadProgress(100,"Ολοκληρώθηκε: 100%")
                 runOnUiThread {
                     capture = loaded
                     diagnostics = analysis
@@ -317,20 +359,43 @@ class MainActivity : Activity() {
                     northIndexes = loaded.packets.indices.filter { loaded.packets[it].kind == 0x19 }.toIntArray()
                     replayDirection = 1
                     chart.diagnostics = analysis
+                    chart.desktopBars = bars
+                    chart.chartMode = 0
+                    chartMode = 0
+                    chartModeButton.text = "PY 35 BARS ▾"
+                    lastFullReport = full
+                    lastErrorSummary = errorSummary
+                    lastAlertSummary = alertSummary
                     refreshAnalysisPages()
-                    progress.visibility = View.GONE
                     showTab(0)
                     jumpTo(0)
                     start() // Keep v0.2's successful autoplay.
+                    showReport() // Python-style full analysis is available immediately.
+                    ui.postDelayed({ hideLoadProgress() }, 1400)
                     android.widget.Toast.makeText(this, "$sourceNote • ${loaded.summary.packets} frames", android.widget.Toast.LENGTH_LONG).show()
                 }
             } catch (ex: Exception) {
                 runOnUiThread {
-                    progress.visibility = View.GONE
+                    hideLoadProgress()
                     info.text = "Σφάλμα εισαγωγής: ${ex.message ?: "μη έγκυρο αρχείο"}"
                 }
             }
         }
+    }
+
+    private fun setLoadProgress(pct: Int, stage: String) {
+        runOnUiThread {
+            if (!::progress.isInitialized) return@runOnUiThread
+            progress.visibility = View.VISIBLE
+            progressText.visibility = View.VISIBLE
+            progress.progress = pct.coerceIn(0,100)
+            progressText.text = "${pct.coerceIn(0,100)}%  •  $stage"
+            info.text = stage
+        }
+    }
+    private fun hideLoadProgress() {
+        progress.visibility = View.GONE
+        progressText.visibility = View.GONE
     }
 
     private fun pause() {
@@ -464,8 +529,8 @@ class MainActivity : Activity() {
         val stats = diagnostics ?: return
         val head = "${data.name}\n${data.summary.packets} frames • ${stats.completedCycles} complete cycles • ${data.summary.tracksDecoded} track elements"
         monitor.text = "$head\n\n${AircatReport.create(data, stats)}"
-        errors.text = AircatReport.errors(stats)
-        alerts.text = AircatReport.alerts(stats)
+        errors.text = lastErrorSummary ?: AircatDesktopSummary.errors(data, stats)
+        alerts.text = lastAlertSummary ?: AircatDesktopSummary.alerts(data, stats)
         chart.diagnostics = stats
     }
 
