@@ -38,6 +38,8 @@ class RadarView(context: Context) : View(context) {
         set(value) { field = value.coerceIn(20f, 1000f); zoom = zoom; invalidate() }
     var labelSizeSp = 9f
         set(value) { field = value.coerceIn(7f, 16f); invalidate() }
+    var uiFontSp = 13f
+        set(value) { field = value.coerceIn(13f, 16f); invalidate() }
     var zoom = 12.5f
         set(value) { field = value.coerceIn(250f / maxRangeNm, 50f); invalidate() }
     var showTrails = true
@@ -295,7 +297,7 @@ class RadarView(context: Context) : View(context) {
         }
         paint.style = Paint.Style.FILL
         paint.color = foreground
-        paint.textSize = sp(10f)
+        paint.textSize = sp(uiFontSp)
         canvas.drawText("${tracks.size} targets  •  Scan ${current.cycle}  •  Sector ${current.sector?.toString(16)?.uppercase()?.padStart(2,'0') ?: "--"}  •  Range %.1f NM".format(visibleRangeNm),
             dp(8f), height-dp(12f), paint)
     }
