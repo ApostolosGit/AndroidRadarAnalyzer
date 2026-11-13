@@ -33,8 +33,12 @@ class RadarView(context: Context) : View(context) {
     var coordinateDivisor = 32.0
         set(value) { field = value; invalidate() }
     // 250 NM is the original reference radius. A zoom of 12.5 means 20 NM.
+    var maxRangeNm = 250f
+        set(value) { field = value.coerceIn(20f, 1000f); zoom = zoom; invalidate() }
+    var labelSizeSp = 9f
+        set(value) { field = value.coerceIn(7f, 20f); invalidate() }
     var zoom = 12.5f
-        set(value) { field = value.coerceIn(0.5f, 50f); invalidate() }
+        set(value) { field = value.coerceIn(250f / maxRangeNm, 50f); invalidate() }
     var showTrails = true
         set(value) { field = value; invalidate() }
     var onTrackTap: ((RadarTrack) -> Unit)? = null
@@ -202,7 +206,7 @@ class RadarView(context: Context) : View(context) {
                 }
                 paint.style = Paint.Style.FILL
                 paint.color = Color.BLACK
-                paint.textSize = sp(9f)
+                paint.textSize = sp(labelSizeSp)
                 val labelWidth = paint.measureText(text)
                 val labelHeight = paint.textSize
                 val distance = dp(9f)
