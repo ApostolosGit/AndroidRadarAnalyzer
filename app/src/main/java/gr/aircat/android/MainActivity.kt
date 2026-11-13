@@ -54,6 +54,8 @@ class MainActivity : Activity() {
     private var lastAlertSummary: String? = null
     private var maxRangeNm = 250f
     private var aircraftLabelSp = 9f
+    private var uiTextSp = 13f
+    private val scalableText = ArrayList<java.lang.ref.WeakReference<TextView>>()
     private var pauseOnErrors = false
     private var errorNorthTimes: Set<Double> = emptySet()
 
@@ -83,14 +85,16 @@ class MainActivity : Activity() {
     private fun dp(x: Int) = (x * resources.displayMetrics.density + .5f).toInt()
     private fun title(text: String, size: Float = 12f) = TextView(this).apply {
         this.text = text
-        textSize = size
+        textSize = uiTextSp
+        scalableText.add(java.lang.ref.WeakReference<TextView>(this))
         setTextColor(fg)
         setPadding(dp(7), dp(4), dp(7), dp(4))
         maxLines = 3
     }
     private fun button(text: String, size: Float = 11f, onTap: () -> Unit) = Button(this).apply {
         this.text = text
-        textSize = size
+        textSize = uiTextSp
+        scalableText.add(java.lang.ref.WeakReference<TextView>(this))
         isAllCaps = false
         minWidth = 0
         minimumWidth = 0
@@ -117,7 +121,8 @@ class MainActivity : Activity() {
         window.navigationBarColor = Color.rgb(65, 143, 184)
         val prefs = getSharedPreferences("aircat_v2_settings", MODE_PRIVATE)
         maxRangeNm = prefs.getFloat("max_range_nm", 250f)
-        aircraftLabelSp = prefs.getFloat("label_size_sp", 9f)
+        aircraftLabelSp = prefs.getFloat("label_size_sp", 9f).coerceIn(7f, 16f)
+        uiTextSp = prefs.getFloat("all_text_size_sp", 13f).coerceIn(13f,16f)
         pauseOnErrors = prefs.getBoolean("pause_on_north_errors", false)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -137,7 +142,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v2.0", 17f))
+        root.addView(title("AIRCAT500 Mobile  v2.1", 13f))
         val open = button("Άνοιγμα", 11f) { chooseFile() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 10f) { showReport() }
@@ -171,12 +176,13 @@ class MainActivity : Activity() {
             this.filter = currentFilter
             maxRangeNm = this@MainActivity.maxRangeNm
             labelSizeSp = aircraftLabelSp
+            uiFontSp = uiTextSp
             onTrackTap = { track -> showTrack(track) }
         }
         monitor = title("Δεν έχει φορτωθεί αρχείο.")
         errors = title("Δεν υπάρχουν στοιχεία σφαλμάτων.")
         alerts = title("Δεν υπάρχουν στοιχεία alerts.")
-        chart = ChartView(this)
+        chart = ChartView(this).apply { uiFontSp = uiTextSp }
         val views: Array<View> = arrayOf(radar, scrollText(monitor), scrollText(errors), scrollText(alerts), chart)
         showViews = views
         views.forEach { body.addView(it, LinearLayout.LayoutParams(-1, 0, 1f)) }
@@ -233,9 +239,10 @@ class MainActivity : Activity() {
             if (playing) resetClock()
         }
         root.addView(row(reverseButton, play, forwardButton, rate,
-            button("+1") { jumpTo(record) }, height = 43))
-        root.addView(row(button("⏮ Reset") { jumpTo(0) },
-            button("◀ -1 Frame") { jumpTo((record-2).coerceAtLeast(0)) }, height = 34))
+            button("⏮ Reset") { jumpTo(0) }, height = 43))
+        root.addView(row(
+            button("◀ −1 Frame") { jumpTo((record-2).coerceAtLeast(0)) },
+            button("+1 Frame ▶") { jumpTo(record) }, height = 36))
         showTab(0)
         ui.post(ticker)
     }
@@ -309,7 +316,7 @@ class MainActivity : Activity() {
                             val pct = (75L * seen / expectedBytes).toInt().coerceIn(0,75)
                             if (pct != lastPct) {
                                 lastPct=pct
-                                setLoadProgress(pct,"Ανάγνωση αρχείου: ${(seen * 100L / expectedBytes).coerceIn(0,100)}%")
+                                setLoadProgress(pct,"Ανάγνωση AIRCAT500 αρχείου")
                             }
                         }
                         override fun read(): Int {
@@ -409,12 +416,19 @@ class MainActivity : Activity() {
             progressText.visibility = View.VISIBLE
             progress.progress = pct.coerceIn(0,100)
             progressText.text = "${pct.coerceIn(0,100)}%  •  $stage"
-            info.text = stage
+            // Do not repeat the progress percentage in the info line.
         }
     }
     private fun hideLoadProgress() {
         progress.visibility = View.GONE
         progressText.visibility = View.GONE
+    }
+    private fun applyUiFontSize() {
+        for (label in scalableText) label.get()?.textSize = uiTextSp
+        scalableText.removeAll { it.get() == null }
+        if (::radar.isInitialized) radar.uiFontSp = uiTextSp
+        if (::chart.isInitialized) chart.uiFontSp = uiTextSp
+        // Android dialogs are populated using uiTextSp when opened.
     }
 
     private fun pause() {
@@ -584,8 +598,8 @@ class MainActivity : Activity() {
             CheckBox(this).apply {
                 text = labels[i]
                 isChecked = initial[i]
-                textSize = 13f
-                content.addView(this, LinearLayout.LayoutParams(-1, dp(38)))
+                textSize = uiTextSp
+                content.addView(this, LinearLayout.LayoutParams(-1, dp(42)))
             }
         }
         val historyText = title("Ίχνη ιστορικού ανά στόχο: ${replay.trailDepth}", 12f)
@@ -610,7 +624,7 @@ class MainActivity : Activity() {
             return EditText(this).apply {
                 this.hint = hint
                 setSingleLine(true)
-                textSize = 13f
+                textSize = uiTextSp
                 inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED
                 setText(existing?.toString() ?: "")
                 content.addView(this, LinearLayout.LayoutParams(-1, dp(48)))
@@ -692,7 +706,7 @@ class MainActivity : Activity() {
             }
         }
         val text=TextView(this).apply {
-            setText(summary); textSize=10f; setTextColor(fg); setTextIsSelectable(true)
+            setText(summary); textSize=uiTextSp; setTextColor(fg); setTextIsSelectable(true)
             setPadding(dp(13),dp(12),dp(13),dp(12))
         }
         AlertDialog.Builder(this).setTitle("Current Scan RAW")
@@ -715,6 +729,7 @@ class MainActivity : Activity() {
         val titleRange = title("Μέγιστη κλίμακα RADAR (NM) • αρχική 20 NM", 12f)
         layout.addView(titleRange)
         val range = EditText(this).apply {
+            textSize = uiTextSp
             inputType = InputType.TYPE_CLASS_NUMBER
             setSingleLine()
             setText(maxRangeNm.toInt().toString())
@@ -725,38 +740,56 @@ class MainActivity : Activity() {
         val sizeText = title("Μέγεθος γραμμάτων στόχων: ${currentSize} sp", 12f)
         layout.addView(sizeText)
         val sizes = SeekBar(this).apply {
-            max = 20
+            max = 16
             if (Build.VERSION.SDK_INT >= 26) min = 7
-            progress = currentSize
+            progress = currentSize.coerceIn(7,16)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(bar: SeekBar?, size: Int, fromUser: Boolean) {
-                    sizeText.text = "Μέγεθος γραμμάτων στόχων: ${size.coerceIn(7,20)} sp"
+                    sizeText.text = "Μέγεθος γραμμάτων στόχων: ${size.coerceIn(7,16)} sp"
                 }
                 override fun onStartTrackingTouch(bar: SeekBar?) {}
                 override fun onStopTrackingTouch(bar: SeekBar?) {}
             })
         }
         layout.addView(sizes)
+        val allSizeText = title("Μέγεθος μενού / report / συνόψεων: ${uiTextSp.toInt()} sp", 13f)
+        layout.addView(allSizeText)
+        val allSizes = SeekBar(this).apply {
+            max = 16
+            if (Build.VERSION.SDK_INT >= 26) min = 13
+            progress = uiTextSp.toInt().coerceIn(13,16)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, size: Int, fromUser: Boolean) {
+                    allSizeText.text = "Μέγεθος μενού / report / συνόψεων: ${size.coerceIn(13,16)} sp"
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+        }
+        layout.addView(allSizes)
         val pauseError = CheckBox(this).apply {
             text = "Pause Replay σε NORTH / sector missing"
-            textSize = 12f
+            textSize = uiTextSp
             isChecked = pauseOnErrors
         }
         layout.addView(pauseError)
-        layout.addView(title("Ανοιχτό γκρι RADAR • κόκκινοι δακτύλιοι • αρχική κλίμακα 20 NM",11f))
+        layout.addView(title("Ανοιχτό γκρι RADAR • μπλε δακτύλιοι • αρχική κλίμακα 20 NM",11f))
         AlertDialog.Builder(this)
             .setTitle("Ρυθμίσεις AIRCAT500")
             .setView(layout)
             .setPositiveButton("Εφαρμογή") { _, _ ->
                 val rangeNm = (range.text.toString().toFloatOrNull() ?: 250f).coerceIn(20f,1000f)
                 maxRangeNm = rangeNm
-                aircraftLabelSp = sizes.progress.toFloat().coerceIn(7f,20f)
+                aircraftLabelSp = sizes.progress.toFloat().coerceIn(7f,16f)
+                uiTextSp = allSizes.progress.toFloat().coerceIn(13f,16f)
                 pauseOnErrors = pauseError.isChecked
                 radar.maxRangeNm = rangeNm
                 radar.labelSizeSp = aircraftLabelSp
+                applyUiFontSize()
                 getSharedPreferences("aircat_v2_settings",MODE_PRIVATE).edit()
                     .putFloat("max_range_nm",maxRangeNm)
                     .putFloat("label_size_sp",aircraftLabelSp)
+                    .putFloat("all_text_size_sp",uiTextSp)
                     .putBoolean("pause_on_north_errors",pauseOnErrors).apply()
             }
             .setNeutralButton("About") { _, _ -> showAbout() }
@@ -773,7 +806,7 @@ class MainActivity : Activity() {
                 "Radar: 20 NM initial, configurable max 250 NM\n" +
                 "Desktop reference: Python Analyzer v9.16\n" +
                 "SYNC2USB live Wi-Fi/USB: not included in this build.\n" +
-                "Version v2.0 uses capture-derived statistics; unavailable Python statistics are not invented.")
+                "Version v2.1 preserves the original decoder and improves scan rendering and labels.")
             .setPositiveButton("OK",null).show()
     }
 
@@ -784,7 +817,7 @@ class MainActivity : Activity() {
         }
         val text = TextView(this).apply {
             setText(report)
-            textSize=11f
+            textSize=uiTextSp
             setTextColor(fg)
             setTextIsSelectable(true)
             setPadding(dp(14),dp(14),dp(14),dp(14))

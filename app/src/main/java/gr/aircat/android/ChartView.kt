@@ -30,6 +30,8 @@ class ChartView(context: Context) : View(context) {
     private var horizontalScale = 1f
     private var scrollBars = 0f
     private var dragX = 0f
+    var uiFontSp = 13f
+        set(value) { field = value.coerceIn(13f,16f); invalidate() }
     private val brush = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pinch = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -39,7 +41,7 @@ class ChartView(context: Context) : View(context) {
         }
     })
     private fun dp(n: Float) = n * resources.displayMetrics.density
-    private fun sp(n: Float) = n * resources.displayMetrics.scaledDensity
+    private fun sp(n: Float) = max(n,uiFontSp) * resources.displayMetrics.scaledDensity
 
     fun resetZoom() { horizontalScale=1f; scrollBars=0f; zoomPeak=false; invalidate() }
     fun peakZoom() { zoomPeak=true; invalidate() }

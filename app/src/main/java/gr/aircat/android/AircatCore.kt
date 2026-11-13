@@ -300,8 +300,10 @@ class RadarReplayState {
         packetsShown++
         when {
             packet.kind == 0x19 -> {
+                // NORTH marks a new revolution, it does not erase the plot.
+                // Targets are retired only when their own azimuth sector is
+                // refreshed, or on an explicit cancellation.
                 cycle++
-                tracksBySector.clear()
                 sector = null
             }
             packet.sector != null -> {
@@ -310,11 +312,24 @@ class RadarReplayState {
                 val cancels = incoming.filter { it.cancellation }.map { it.number }.toSet()
                 if (cancels.isNotEmpty()) {
                     for ((key, tracks) in tracksBySector) {
-                        tracksBySector[key] = tracks.map { if (it.number in cancels) it.copy(cancelled = true) else it }
+                        tracksBySector[key] = tracks.filterNot { it.number in cancels }
                     }
                 }
-                tracksBySector[packet.sector] = incoming.filterNot { it.cancellation }
-                for (track in incoming.filterNot { it.cancellation }) {
+                val refreshed = incoming.filterNot { it.cancellation }
+                // A track that moved into another sector must not be shown
+                // twice while neighbouring sectors await their next sweep.
+                val movedNumbers = refreshed.map { it.number }.toSet()
+                if (movedNumbers.isNotEmpty()) {
+                    for ((oldSector, oldTracks) in tracksBySector.toMap()) {
+                        if (oldSector != packet.sector) {
+                            tracksBySector[oldSector] = oldTracks.filterNot {
+                                it.number in movedNumbers
+                            }
+                        }
+                    }
+                }
+                tracksBySector[packet.sector] = refreshed
+                for (track in refreshed) {
                     val trail = trackTrail.getOrPut(track.number) { ArrayDeque() }
                     trail.add(track)
                     while (trail.size > maxOf(2, trailDepth)) trail.removeFirst()
@@ -322,8 +337,16 @@ class RadarReplayState {
             }
             packet.kind == 0x0D && packet.tracks.isNotEmpty() -> {
                 // Extension messages do not have their own sector number.
-                tracksBySector[sector ?: -1] = packet.tracks.filterNot { it.cancellation }
-                for (track in packet.tracks.filterNot { it.cancellation }) {
+                // Extension updates only matching tracks; do not wipe the
+                // entire current sector simply because an extension arrived.
+                val sectorKey = sector ?: -1
+                val extension = packet.tracks.filterNot { it.cancellation }
+                val updated = extension.map { it.number }.toSet()
+                for ((key,old) in tracksBySector.toMap()) {
+                    tracksBySector[key] = old.filterNot { it.number in updated }
+                }
+                tracksBySector[sectorKey] = (tracksBySector[sectorKey] ?: emptyList()) + extension
+                for (track in extension) {
                     val trail = trackTrail.getOrPut(track.number) { ArrayDeque() }
                     trail.add(track)
                     while (trail.size > maxOf(2, trailDepth)) trail.removeFirst()

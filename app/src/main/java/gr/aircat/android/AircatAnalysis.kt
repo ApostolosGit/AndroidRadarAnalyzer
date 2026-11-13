@@ -15,7 +15,7 @@ data class RadarFilter(
     val showRangeLabel: Boolean = false,
     val showModeALabel: Boolean = true,
     val showModeCLabel: Boolean = true,
-    val showTrackNumberLabel: Boolean = true,
+    val showTrackNumberLabel: Boolean = false,
     val showSpeedLabel: Boolean = false,
     val showQualityLabel: Boolean = false,
     val showMissesLabel: Boolean = false,
