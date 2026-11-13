@@ -6,14 +6,12 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
-import android.view.ScaleGestureDetector
 import android.view.View
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 /** v1.0 high-contrast native Android radar; smooth sweep, alerts, trails, pan/zoom, tap target. */
 class RadarView(context: Context) : View(context) {
@@ -24,7 +22,9 @@ class RadarView(context: Context) : View(context) {
     private val foreground = Color.rgb(20, 36, 52)
     private val ringColor = Color.rgb(36, 101, 182)
     private val minorRingColor = Color.rgb(127, 177, 225)
-    private val fixedRangeRingsNm = listOf(5, 10, 15, 20, 50, 100, 150, 200)
+    // All 5-NM rings, configurable outermost value (5–500 NM).
+    var maxRingNm = 220
+        set(value) { field = (value.coerceIn(5,500) / 5) * 5; invalidate() }
     var state: RadarReplayState? = null
         set(value) { field = value; invalidate() }
     var filter: RadarFilter = RadarFilter()
@@ -38,8 +38,8 @@ class RadarView(context: Context) : View(context) {
         set(value) { field = value.coerceIn(20f, 1000f); zoom = zoom; invalidate() }
     var labelSizeSp = 9f
         set(value) { field = value.coerceIn(7f, 16f); invalidate() }
-    var uiFontSp = 13f
-        set(value) { field = value.coerceIn(13f, 16f); invalidate() }
+    var uiFontSp = 16f
+        set(value) { field = value.coerceIn(13f, 20f); invalidate() }
     var zoom = 12.5f
         set(value) { field = value.coerceIn(250f / maxRangeNm, 50f); invalidate() }
     var showTrails = true
@@ -58,12 +58,6 @@ class RadarView(context: Context) : View(context) {
     private val labelBounds = ArrayList<Pair<Int, RectF>>()
     private var movingLabelId: Int? = null
     private var movedLabel = false
-    private val pinch = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-        override fun onScale(detector: ScaleGestureDetector): Boolean {
-            zoom *= detector.scaleFactor
-            return true
-        }
-    })
     private fun dp(n: Float) = n * resources.displayMetrics.density
     private fun sp(n: Float) = n * resources.displayMetrics.scaledDensity
     private fun color(hex: String) = Color.parseColor(hex)
@@ -73,31 +67,6 @@ class RadarView(context: Context) : View(context) {
         val range = 250.0 * coordinateDivisor
         return Pair(cx + panX + ((track.xRaw.toDouble() / range) * radius * zoom).toFloat(),
             cy + panY - ((track.yRaw.toDouble() / range) * radius * zoom).toFloat())
-    }
-
-    /** Choose a visible edge intersection even when the radar centre is off-screen. */
-    private fun ringLabelPoint(cx: Float, cy: Float, radius: Float): Pair<Float, Float>? {
-        val margin = dp(12f)
-        val candidates = ArrayList<Pair<Float, Float>>()
-        for (y in listOf(margin + dp(7f), height - margin - dp(10f))) {
-            val term = radius * radius - (y - cy) * (y - cy)
-            if (term >= 0) {
-                val dx = sqrt(term)
-                candidates.add(cx + dx to y)
-                candidates.add(cx - dx to y)
-            }
-        }
-        for (x in listOf(margin, width - margin - dp(30f))) {
-            val term = radius * radius - (x - cx) * (x - cx)
-            if (term >= 0) {
-                val dy = sqrt(term)
-                candidates.add(x to cy + dy)
-                candidates.add(x to cy - dy)
-            }
-        }
-        return candidates.firstOrNull { (x,y) ->
-            x > margin && x < width - dp(48f) && y > dp(19f) && y < height - dp(25f)
-        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -112,14 +81,12 @@ class RadarView(context: Context) : View(context) {
         val visibleRangeNm = 250.0 / zoom
         // Draw every true-range circle which can intersect the view, not just
         // the four rings surrounding the origin. Pan and zoom share one scale.
-        val maxDx = maxOf(abs(ox), abs(width - ox))
-        val maxDy = maxOf(abs(oy), abs(height - oy))
-        val farthestNm = hypot(maxDx.toDouble(), maxDy.toDouble()) / pixelsPerNm
-        // Eight explicitly calibrated rings. Pan and zoom transform their
-        // centre and radius exactly like the radar tracks.
-        for (nm in fixedRangeRingsNm) {
+        // Preserve the physical NM positions while panning and zooming.
+        // Only the outermost visible ring is configurable.
+        val occupiedAxisLabels = ArrayList<RectF>()
+        for (nm in 5..maxRingNm step 5) {
             val ringRadius = pixelsPerNm * nm
-            val major = nm in listOf(20, 50, 100, 150, 200)
+            val major = nm % 20 == 0 || nm % 50 == 0
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = dp(if (major) 1.25f else 0.8f)
             paint.color = if (major) ringColor else minorRingColor
@@ -137,13 +104,16 @@ class RadarView(context: Context) : View(context) {
                 (ox + dp(4f)) to (oy + ringRadius - dp(3f))
             )
             for ((tx,ty) in points) {
-                if (tx >= dp(2f) && tx+tw < width-dp(2f) &&
-                    ty > paint.textSize+dp(2f) && ty < height-dp(19f)) {
+                val rect = RectF(tx-dp(2f),ty-paint.textSize,
+                    tx+tw+dp(2f),ty+dp(2f))
+                if (rect.left >= dp(2f) && rect.right < width-dp(2f) &&
+                    rect.top >= dp(2f) && rect.bottom < height-dp(19f) &&
+                    occupiedAxisLabels.none { RectF.intersects(it,rect) }) {
                     paint.color = background
-                    canvas.drawRect(tx-dp(2f),ty-paint.textSize,
-                        tx+tw+dp(2f),ty+dp(2f),paint)
+                    canvas.drawRect(rect,paint)
                     paint.color = if (major) ringColor else Color.rgb(78,134,194)
                     canvas.drawText(annotation,tx,ty,paint)
+                    occupiedAxisLabels.add(rect)
                 }
             }
         }
@@ -305,7 +275,6 @@ class RadarView(context: Context) : View(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        pinch.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 touchX=event.x; touchY=event.y; dragging=false; movedLabel=false
@@ -315,10 +284,10 @@ class RadarView(context: Context) : View(context) {
                 return true
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
-                movingLabelId=null
+                movingLabelId=null // multi-touch ignored, zoom is via overlay +/-
             }
             MotionEvent.ACTION_MOVE -> {
-                if (event.pointerCount==1 && !pinch.isInProgress) {
+                if (event.pointerCount==1) {
                     val dx=event.x-touchX
                     val dy=event.y-touchY
                     if (abs(dx)>dp(2f) || abs(dy)>dp(2f)) dragging=true
@@ -344,7 +313,7 @@ class RadarView(context: Context) : View(context) {
                 }
             }
             MotionEvent.ACTION_UP -> {
-                if (!dragging && !pinch.isInProgress && !movedLabel) {
+                if (!dragging && !movedLabel) {
                     val closest=hitPoints.minByOrNull { (_,p) ->
                         hypot((p.first-event.x).toDouble(),(p.second-event.y).toDouble())
                     }
