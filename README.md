@@ -1,6 +1,17 @@
-# AIRCAT500 Mobile v2.0 (AndroidRadarAnalyzer)
+# AIRCAT500 Mobile v2.1 (AndroidRadarAnalyzer)
 
 Native Kotlin Android application **based on the verified AIRCAT500 Analyzer v9.16 for Windows** and the tested AIRCAT500 Mobile v0.2 radar playback.
+
+## v2.1 improvements (over v2.0)
+
+- **Single file-load percentage** in the horizontal progress display, followed by explicit analysis and report stages.
+- **Independent fonts:** all application menus, charts, errors/alerts summaries and reports default to **13sp**, adjustable 13–16sp; aircraft labels use a separate slider (7–16sp) with 9sp initial. Preferences are saved.
+- **Aircraft labels:** separate line per enabled Mode A, Mode C, Speed, Q, etc; tap and drag the actual label to relocate it. Track Number is unchecked initially.
+- **Scan persistence:** NORTH starts another rotation without clearing the plot. Each 00–1F sector replaces only its own aircraft on arrival; moved tracks are de-duplicated; explicit cancellations remove aircraft immediately.
+- **Radar:** light-grey background and persistent blue rings at exactly 5, 10, 15, 20, 50, 100, 150 and 200 NM. NM numbers rendered on visible X and Y ring-axis intersections using the aircraft-label font size.
+- **Replay controls:** `<<`, Play, `>>`, speed and **Reset** on the upper row; **−1 Frame** and **+1 Frame** underneath.
+- **Errors/Alerts:** retains the v2 numeric desktop-inspired summaries. Separate reference screenshots must be supplied before pixel-/field-accurate matching with the Python desktop interface can be claimed.
+- Does not alter live transport support, target symbology Δ/U/○, decoder wire format, report sharing or desktop chart modes.
 
 ## v2.0 additions (over v1.0.2)
 
