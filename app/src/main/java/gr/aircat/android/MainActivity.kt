@@ -54,6 +54,8 @@ class MainActivity : Activity() {
     private var lastAlertSummary: String? = null
     private var maxRangeNm = 250f
     private var aircraftLabelSp = 9f
+    private var uiTextSp = 13f
+    private val scalableText = ArrayList<TextView>()
     private var pauseOnErrors = false
     private var errorNorthTimes: Set<Double> = emptySet()
 
@@ -83,14 +85,16 @@ class MainActivity : Activity() {
     private fun dp(x: Int) = (x * resources.displayMetrics.density + .5f).toInt()
     private fun title(text: String, size: Float = 12f) = TextView(this).apply {
         this.text = text
-        textSize = size
+        textSize = uiTextSp
+        scalableText.add(this)
         setTextColor(fg)
         setPadding(dp(7), dp(4), dp(7), dp(4))
         maxLines = 3
     }
     private fun button(text: String, size: Float = 11f, onTap: () -> Unit) = Button(this).apply {
         this.text = text
-        textSize = size
+        textSize = uiTextSp
+        scalableText.add(this)
         isAllCaps = false
         minWidth = 0
         minimumWidth = 0
@@ -117,7 +121,8 @@ class MainActivity : Activity() {
         window.navigationBarColor = Color.rgb(65, 143, 184)
         val prefs = getSharedPreferences("aircat_v2_settings", MODE_PRIVATE)
         maxRangeNm = prefs.getFloat("max_range_nm", 250f)
-        aircraftLabelSp = prefs.getFloat("label_size_sp", 9f)
+        aircraftLabelSp = prefs.getFloat("label_size_sp", 9f).coerceIn(7f, 16f)
+        uiTextSp = prefs.getFloat("all_text_size_sp", 13f).coerceIn(13f,16f)
         pauseOnErrors = prefs.getBoolean("pause_on_north_errors", false)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -137,7 +142,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v2.0", 17f))
+        root.addView(title("AIRCAT500 Mobile  v2.1", 13f))
         val open = button("Άνοιγμα", 11f) { chooseFile() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 10f) { showReport() }
@@ -171,12 +176,13 @@ class MainActivity : Activity() {
             this.filter = currentFilter
             maxRangeNm = this@MainActivity.maxRangeNm
             labelSizeSp = aircraftLabelSp
+            uiFontSp = uiTextSp
             onTrackTap = { track -> showTrack(track) }
         }
         monitor = title("Δεν έχει φορτωθεί αρχείο.")
         errors = title("Δεν υπάρχουν στοιχεία σφαλμάτων.")
         alerts = title("Δεν υπάρχουν στοιχεία alerts.")
-        chart = ChartView(this)
+        chart = ChartView(this).apply { uiFontSp = uiTextSp }
         val views: Array<View> = arrayOf(radar, scrollText(monitor), scrollText(errors), scrollText(alerts), chart)
         showViews = views
         views.forEach { body.addView(it, LinearLayout.LayoutParams(-1, 0, 1f)) }
@@ -233,9 +239,10 @@ class MainActivity : Activity() {
             if (playing) resetClock()
         }
         root.addView(row(reverseButton, play, forwardButton, rate,
-            button("+1") { jumpTo(record) }, height = 43))
-        root.addView(row(button("⏮ Reset") { jumpTo(0) },
-            button("◀ -1 Frame") { jumpTo((record-2).coerceAtLeast(0)) }, height = 34))
+            button("⏮ Reset") { jumpTo(0) }, height = 43))
+        root.addView(row(
+            button("◀ −1 Frame") { jumpTo((record-2).coerceAtLeast(0)) },
+            button("+1 Frame ▶") { jumpTo(record) }, height = 36))
         showTab(0)
         ui.post(ticker)
     }
@@ -309,7 +316,7 @@ class MainActivity : Activity() {
                             val pct = (75L * seen / expectedBytes).toInt().coerceIn(0,75)
                             if (pct != lastPct) {
                                 lastPct=pct
-                                setLoadProgress(pct,"Ανάγνωση αρχείου: ${(seen * 100L / expectedBytes).coerceIn(0,100)}%")
+                                setLoadProgress(pct,"Ανάγνωση AIRCAT500 αρχείου")
                             }
                         }
                         override fun read(): Int {
@@ -409,12 +416,18 @@ class MainActivity : Activity() {
             progressText.visibility = View.VISIBLE
             progress.progress = pct.coerceIn(0,100)
             progressText.text = "${pct.coerceIn(0,100)}%  •  $stage"
-            info.text = stage
+            // Do not repeat the progress percentage in the info line.
         }
     }
     private fun hideLoadProgress() {
         progress.visibility = View.GONE
         progressText.visibility = View.GONE
+    }
+    private fun applyUiFontSize() {
+        for (label in scalableText) label.textSize = uiTextSp
+        if (::radar.isInitialized) radar.uiFontSp = uiTextSp
+        if (::chart.isInitialized) chart.uiFontSp = uiTextSp
+        // Android dialogs are populated using uiTextSp when opened.
     }
 
     private fun pause() {
