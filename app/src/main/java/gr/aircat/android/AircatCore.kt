@@ -312,7 +312,7 @@ class RadarReplayState {
                 val cancels = incoming.filter { it.cancellation }.map { it.number }.toSet()
                 if (cancels.isNotEmpty()) {
                     for ((key, tracks) in tracksBySector) {
-                        tracksBySector[key] = tracks.map { if (it.number in cancels) it.copy(cancelled = true) else it }
+                        tracksBySector[key] = tracks.filterNot { it.number in cancels }
                     }
                 }
                 val refreshed = incoming.filterNot { it.cancellation }
