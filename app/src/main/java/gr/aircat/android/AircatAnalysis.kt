@@ -191,7 +191,7 @@ object AircatAnalysis {
 /** Native text export, designed to be comparable to the supplied Python v9.16 summary. */
 object AircatReport {
     private fun fmt(value: Double?, digits: Int = 2) = value?.let { String.format(Locale.US, "% .${digits}f", it).trim() } ?: "n/a"
-    private fun section(text: String) = "\n${"-".repeat(54)}\n$text\n${"-".repeat(54)}\n"
+    private fun section(text: String) = "\n${"-".repeat(50)}\n$text\n${"-".repeat(50)}\n"
 
     fun create(capture: RadarCapture, stats: CaptureDiagnostics): String = buildString {
         val base = capture.summary
