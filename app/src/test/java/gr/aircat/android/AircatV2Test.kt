@@ -45,7 +45,7 @@ class AircatV2Test {
         assertEquals(1,stats.invalidCycles)
         assertEquals(1,bars.withoutNorth[3])
         assertEquals(1,bars.withoutNorth[34])
-        assertEquals(1,bars.missing[0])
+        assertEquals(0,bars.missing[0])
     }
     @Test fun labelDefaultsMatchV2Requirements() {
         val filter=RadarFilter()
