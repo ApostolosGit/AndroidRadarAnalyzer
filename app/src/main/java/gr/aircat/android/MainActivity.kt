@@ -86,7 +86,7 @@ class MainActivity : Activity() {
     private fun title(text: String, size: Float = 12f) = TextView(this).apply {
         this.text = text
         textSize = uiTextSp
-        scalableText.add(java.lang.ref.WeakReference(this))
+        scalableText.add(java.lang.ref.WeakReference<TextView>(this))
         setTextColor(fg)
         setPadding(dp(7), dp(4), dp(7), dp(4))
         maxLines = 3
@@ -94,7 +94,7 @@ class MainActivity : Activity() {
     private fun button(text: String, size: Float = 11f, onTap: () -> Unit) = Button(this).apply {
         this.text = text
         textSize = uiTextSp
-        scalableText.add(java.lang.ref.WeakReference(this))
+        scalableText.add(java.lang.ref.WeakReference<TextView>(this))
         isAllCaps = false
         minWidth = 0
         minimumWidth = 0
