@@ -1,0 +1,134 @@
+name: Publish AIRCAT500 Mobile v2 official releases
+
+on:
+  push:
+    branches: [feature/mobile-v2-2-display-fixes]
+    paths:
+      - .github/workflows/publish-v2-official-releases.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: aircat500-v2-official-releases
+  cancel-in-progress: false
+
+jobs:
+  publish-releases:
+    name: Preserve tested APKs and source in GitHub Releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Verify historic green builds and publish v2.0, v2.1 and v2.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-staging
+
+          publish() {
+            local version="$1"
+            local run_id="$2"
+            local tested_commit="$3"
+            local apk_artifact="$4"
+            local source_artifact="$5"
+            local tag="v$version"
+            local work="release-staging/$tag"
+            local expected_apk="AIRCAT500_V$version.apk"
+            local expected_source="AIRCAT500_V${version}_AndroidStudio.zip"
+            mkdir -p "$work/apk" "$work/source" "$work/ready"
+
+            echo "::group::Verify release $tag (run #$run_id)"
+            local run_sha run_status run_conclusion
+            run_sha="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq .head_sha)"
+            run_status="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq .status)"
+            run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq .conclusion)"
+            test "$run_sha" = "$tested_commit"
+            test "$run_status" = completed
+            test "$run_conclusion" = success
+
+            gh run download "$run_id" --name "$apk_artifact" --dir "$work/apk"
+            gh run download "$run_id" --name "$source_artifact" --dir "$work/source"
+
+            local apk_path src_path
+            apk_path="$(find "$work/apk" -type f -name '*.apk' -print -quit)"
+            src_path="$(find "$work/source" -type f -name '*.zip' -print -quit)"
+            if [[ -z "$apk_path" || -z "$src_path" ]]; then
+              echo "Missing release payload: APK=$apk_path source=$src_path" >&2
+              exit 1
+            fi
+
+            cp "$apk_path" "$work/ready/$expected_apk"
+            cp "$src_path" "$work/ready/$expected_source"
+            unzip -tq "$work/ready/$expected_apk" >/dev/null
+            unzip -tq "$work/ready/$expected_source" >/dev/null
+            unzip -Z -1 "$work/ready/$expected_apk" | grep -qx 'AndroidManifest.xml'
+            unzip -Z -1 "$work/ready/$expected_apk" | grep -qx 'classes.dex'
+            (cd "$work/ready"; sha256sum "$expected_apk" "$expected_source" > SHA256SUMS.txt)
+
+            case "$version" in
+              2.0)
+                details="Aviation-blue application interface, settings and About, 20 NM startup radar range, enhanced capture analysis, desktop-inspired Errors/Alerts/Charts, Zoom Peak, load progress and detailed reports with Android sharing."
+                ;;
+              2.1)
+                details="One loading percentage, independently adjustable application/target label fonts, moving multiline labels, default-hidden track number, per-sector target persistence, blue range rings and revised replay controls."
+                ;;
+              2.2)
+                details="Improved Errors/Alerts display, menu typography, blue ring display and radar zoom controls. User-facing version and APK filename are exactly 2.2."
+                ;;
+              *)
+                echo "Unexpected release version: $version" >&2
+                exit 1
+                ;;
+            esac
+
+            cat > "$work/ready/RELEASE_NOTES.md" <<EOF
+          ## AIRCAT500 Mobile v$version
+
+          $details
+
+          **Downloads**
+          - $expected_apk — Android APK.
+          - $expected_source — matching Android Studio source project.
+          - SHA256SUMS.txt — checksums of both files.
+
+          **Provenance**
+          - Green GitHub Actions build: https://github.com/$GH_REPO/actions/runs/$run_id
+          - Release tag points to exact tested commit: $tested_commit.
+
+          **Important:** This is a CI-built **debug-signed APK**, distributed as a permanent GitHub Release. It is not a production-signed Android application or an operational air traffic control system. Functional acceptance on a physical Android handset is separate from successful CI tests.
+          EOF
+
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "Release $tag exists; refresh notes without replacing the verified assets"
+              gh release edit "$tag" --title "AIRCAT500 Mobile v$version" --notes-file "$work/ready/RELEASE_NOTES.md"
+            else
+              # Reject a pre-existing tag pointing at a different revision.
+              if tag_sha="$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq .object.sha 2>/dev/null)"; then
+                if [[ "$tag_sha" != "$tested_commit" ]]; then
+                  echo "Tag $tag exists at wrong commit $tag_sha (expected $tested_commit)" >&2
+                  exit 1
+                fi
+              fi
+              if [[ "$version" == "2.2" ]]; then
+                gh release create "$tag" "$work/ready/$expected_apk" "$work/ready/$expected_source" "$work/ready/SHA256SUMS.txt" \
+                  --target "$tested_commit" --title "AIRCAT500 Mobile v$version" \
+                  --notes-file "$work/ready/RELEASE_NOTES.md" --latest
+              else
+                gh release create "$tag" "$work/ready/$expected_apk" "$work/ready/$expected_source" "$work/ready/SHA256SUMS.txt" \
+                  --target "$tested_commit" --title "AIRCAT500 Mobile v$version" \
+                  --notes-file "$work/ready/RELEASE_NOTES.md" --latest=false
+              fi
+            fi
+            echo "::endgroup::"
+          }
+
+          publish 2.0 43395414379 2c3283f2c7c7c4a0dcd3e30e4ae5a0c91b21fce4 AIRCAT500-Mobile-v2-debug-apk AIRCAT500-Mobile-v2-AndroidStudio-source
+          publish 2.1 43400902909 10f8ff3118f301be620be4bc5761cb953eceff2f AIRCAT500-Mobile-v2-1-debug-apk AIRCAT500-Mobile-v2-1-AndroidStudio-source
+          publish 2.2 43406971878 5d9f5e9e373a2b31a83b76987dadd798a47e4492 AIRCAT500_V2.2 AIRCAT500_V2.2_AndroidStudio-source
+
+          gh release list --limit 10

@@ -1,7 +1,7 @@
 name: Android Debug APK
 on:
   push:
-    branches: [main, feature/offline-csv-replay-android, feature/mobile-v1-desktop-port, feature/mobile-v1-0-2-radar-replay, feature/mobile-v2-aviation-ui, feature/mobile-v2-1-radar-scans-ui]
+    branches: [main, feature/offline-csv-replay-android, feature/mobile-v1-desktop-port, feature/mobile-v1-0-2-radar-replay, feature/mobile-v2-aviation-ui, feature/mobile-v2-1-radar-scans-ui, feature/mobile-v2-2-display-fixes]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -54,13 +54,15 @@ jobs:
             git commit -m "AIRCAT500 Mobile v1.0: validated Kotlin Android port"
             git push origin HEAD:feature/mobile-v1-desktop-port
           fi
+      - name: Publish requested APK filename
+        run: cp app/build/outputs/apk/debug/app-debug.apk AIRCAT500_V2.2.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: AIRCAT500-Mobile-v2-1-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: AIRCAT500_V2.2
+          path: AIRCAT500_V2.2.apk
       - name: Package Android Studio v2 source
-        run: zip -qr AIRCAT500-Mobile-v2-1-AndroidStudio.zip app/src app/build.gradle.kts README.md build.gradle.kts settings.gradle.kts gradle.properties gradle .gitignore
+        run: zip -qr AIRCAT500_V2.2_AndroidStudio.zip app/src app/build.gradle.kts README.md build.gradle.kts settings.gradle.kts gradle.properties gradle .gitignore
       - uses: actions/upload-artifact@v4
         with:
-          name: AIRCAT500-Mobile-v2-1-AndroidStudio-source
-          path: AIRCAT500-Mobile-v2-1-AndroidStudio.zip
+          name: AIRCAT500_V2.2_AndroidStudio-source
+          path: AIRCAT500_V2.2_AndroidStudio.zip

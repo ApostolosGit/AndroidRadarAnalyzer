@@ -115,10 +115,14 @@ object AircatDesktopSummary {
     }
 
     fun report(capture: RadarCapture, stats: CaptureDiagnostics): String = buildString {
-        appendLine("AIRCAT500 Mobile v2.0 — Αναλυτική Ανάλυση Καταγραφής")
-        appendLine("Desktop v9.16-oriented report (available mobile decoder fields)")
-        appendLine("══════════════════════════════════════════════════════════")
-        appendLine(AircatReport.create(capture,stats))
+        // One title and then the filename immediately, without duplicated
+        // desktop/mobile preambles or decorative rows exceeding 50 characters.
+        appendLine("AIRCAT500 Mobile v2.2 — Αναλυτική Ανάλυση")
+        appendLine("Αρχείο: ${capture.name}")
+        appendLine()
+        val main = AircatReport.create(capture, stats)
+            .lineSequence().drop(3).joinToString("\n")
+        appendLine(main)
         appendLine()
         appendLine(errors(capture,stats))
         appendLine()

@@ -30,8 +30,8 @@ class ChartView(context: Context) : View(context) {
     private var horizontalScale = 1f
     private var scrollBars = 0f
     private var dragX = 0f
-    var uiFontSp = 13f
-        set(value) { field = value.coerceIn(13f,16f); invalidate() }
+    var uiFontSp = 16f
+        set(value) { field = value.coerceIn(13f,20f); invalidate() }
     private val brush = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pinch = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -112,7 +112,7 @@ class ChartView(context: Context) : View(context) {
         scrollBars=scrollBars.coerceIn(0f,(data.size-visible).coerceAtLeast(0f))
         val unit = plotWidth/visible
         canvas.save()
-        canvas.clipRect(plotLeft,plotTop,plotRight,plotBottom+dp(45f))
+        canvas.clipRect(plotLeft,plotTop,plotRight,plotBottom+dp(67f))
         for (i in data.indices) {
             val bx=plotLeft+(i-scrollBars)*unit
             if (bx+unit<plotLeft || bx>plotRight) continue
@@ -141,8 +141,8 @@ class ChartView(context: Context) : View(context) {
             brush.textSize=sp(if (unit<dp(19f)) 8f else 9f)
             // Rotate short sector names to keep all 32 categories recognizable.
             canvas.save()
-            canvas.rotate(-55f,center,plotBottom+dp(13f))
-            canvas.drawText(data[i].first.take(14),center,plotBottom+dp(13f),brush)
+            canvas.rotate(-55f,center,plotBottom+dp(29f))
+            canvas.drawText(data[i].first.take(14),center,plotBottom+dp(29f),brush)
             canvas.restore()
             if (unit>=dp(18f) && data[i].second>0) {
                 brush.color=Color.rgb(24,39,55);brush.textSize=sp(8f)
