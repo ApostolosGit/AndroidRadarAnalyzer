@@ -537,11 +537,19 @@ class MainActivity : Activity() {
     private fun chooseFilters() {
         val previous = currentFilter
         val labels = listOf("PSR (Primary)", "MSSR / SSR", "Low quality",
-            "Cancelled tracks", "Ετικέτες Mode A/C", "Ίχνη τροχιάς",
-            "Μόνο alerts", "Κρύψε invalid Mode A/C", "Range NM στις ετικέτες")
+            "Cancelled tracks", "Ετικέτες στόχων", "Ίχνη τροχιάς",
+            "Μόνο alerts", "Κρύψε invalid Mode A/C", "Range Label (NM)",
+            "Mode A Label", "Mode C Label", "Track Number Label",
+            "Speed Label (kt)", "Quality Q Label", "Detection Misses Label",
+            "TPR Number Label", "LogSigma (SSR) Label", "Time Since North Label",
+            "Tracking Window Label", "Smoothing K Label", "Velocity Vector")
         val initial = listOf(previous.showPSR, previous.showMSSR, previous.showLowQuality,
             previous.showCancelled, previous.showLabels, previous.showTrails,
-            previous.showOnlyAlerts, previous.hideInvalidMode, previous.showRangeLabel)
+            previous.showOnlyAlerts, previous.hideInvalidMode, previous.showRangeLabel,
+            previous.showModeALabel, previous.showModeCLabel, previous.showTrackNumberLabel,
+            previous.showSpeedLabel, previous.showQualityLabel, previous.showMissesLabel,
+            previous.showTprLabel, previous.showLogSigmaLabel, previous.showNorthTimeLabel,
+            previous.showTrackingWindowLabel, previous.showSmoothingLabel, previous.showVelocityVector)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(8), dp(18), dp(8))
@@ -603,7 +611,11 @@ class MainActivity : Activity() {
                         checks[0].isChecked, checks[1].isChecked, checks[2].isChecked,
                         checks[3].isChecked, checks[4].isChecked, checks[5].isChecked,
                         checks[6].isChecked, checks[7].isChecked,
-                        minAlt, maxAlt, minSpd, maxSpd, checks[8].isChecked
+                        minAlt, maxAlt, minSpd, maxSpd, checks[8].isChecked,
+                        checks[9].isChecked, checks[10].isChecked, checks[11].isChecked,
+                        checks[12].isChecked, checks[13].isChecked, checks[14].isChecked,
+                        checks[15].isChecked, checks[16].isChecked, checks[17].isChecked,
+                        checks[18].isChecked, checks[19].isChecked, checks[20].isChecked
                     )
                     radar.filter = currentFilter
                     val newDepth = history.progress.coerceIn(2, 64)
