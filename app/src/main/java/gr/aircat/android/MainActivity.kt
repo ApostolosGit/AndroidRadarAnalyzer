@@ -54,6 +54,8 @@ class MainActivity : Activity() {
     private var lastAlertSummary: String? = null
     private var maxRangeNm = 250f
     private var aircraftLabelSp = 9f
+    private var pauseOnErrors = false
+    private var errorNorthTimes: Set<Double> = emptySet()
 
     private lateinit var info: TextView
     private lateinit var monitor: TextView
@@ -64,6 +66,7 @@ class MainActivity : Activity() {
     private lateinit var progress: ProgressBar
     private lateinit var progressText: TextView
     private lateinit var chartToolbar: LinearLayout
+    private lateinit var monitorToolbar: LinearLayout
     private lateinit var seek: SeekBar
     private lateinit var play: Button
     private lateinit var rate: Button
@@ -115,6 +118,7 @@ class MainActivity : Activity() {
         val prefs = getSharedPreferences("aircat_v2_settings", MODE_PRIVATE)
         maxRangeNm = prefs.getFloat("max_range_nm", 250f)
         aircraftLabelSp = prefs.getFloat("label_size_sp", 9f)
+        pauseOnErrors = prefs.getBoolean("pause_on_north_errors", false)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
@@ -186,6 +190,8 @@ class MainActivity : Activity() {
             button("Zoom Peak",10f) { chart.peakZoom() },
             button("Zoom Out",10f) { chart.resetZoom() }, height = 38)
         root.addView(chartToolbar)
+        monitorToolbar = row(button("Current Scan RAW") { showCurrentScanRaw() }, height = 36)
+        root.addView(monitorToolbar)
         timelineLabel = title("Χρόνος Replay  00:00 / 00:00", 11f)
         root.addView(timelineLabel)
         seek = SeekBar(this).apply {
@@ -227,7 +233,9 @@ class MainActivity : Activity() {
             if (playing) resetClock()
         }
         root.addView(row(reverseButton, play, forwardButton, rate,
-            button("+1") { jumpTo(record) }, height = 45))
+            button("+1") { jumpTo(record) }, height = 43))
+        root.addView(row(button("⏮ Reset") { jumpTo(0) },
+            button("◀ -1 Frame") { jumpTo((record-2).coerceAtLeast(0)) }, height = 34))
         showTab(0)
         ui.post(ticker)
     }
@@ -238,6 +246,7 @@ class MainActivity : Activity() {
         for ((i, view) in showViews.withIndex()) view.visibility = if (i == index) View.VISIBLE else View.GONE
         for ((i, btn) in tabButtons.withIndex()) btn.alpha = if (i == index) 1f else .69f
         chartToolbar.visibility = if (index == 4) View.VISIBLE else View.GONE
+        monitorToolbar.visibility = if (index == 1) View.VISIBLE else View.GONE
         if (index == 1 || index == 2 || index == 3) refreshAnalysisPages()
     }
 
@@ -346,6 +355,15 @@ class MainActivity : Activity() {
                 val analysis = AircatAnalysis.analyze(loaded)
                 setLoadProgress(89,"Σύνοψη Errors / Alerts και Charts...")
                 val bars = AircatDesktopSummary.sectorBars(loaded,analysis)
+                val median = analysis.medianPeriod
+                val northPackets = loaded.packets.filter { it.kind == 0x19 }
+                val missedNorthTimes = if (median != null && median > 0)
+                    northPackets.zipWithNext().filter { (a,b) ->
+                        b.epochSeconds-a.epochSeconds > median*1.9
+                    }.map { it.second.epochSeconds }
+                else emptyList()
+                val pauseNorthTimes = (analysis.cycles.filter { it.invalid }.map { it.nextTime } +
+                    missedNorthTimes).toSet()
                 val errorSummary = AircatDesktopSummary.errors(loaded,analysis)
                 val alertSummary = AircatDesktopSummary.alerts(loaded,analysis)
                 setLoadProgress(95,"Δημιουργία αναλυτικού Report...")
@@ -364,6 +382,7 @@ class MainActivity : Activity() {
                     chartMode = 0
                     chartModeButton.text = "PY 35 BARS ▾"
                     lastFullReport = full
+                    errorNorthTimes = pauseNorthTimes
                     lastErrorSummary = errorSummary
                     lastAlertSummary = alertSummary
                     refreshAnalysisPages()
@@ -464,8 +483,15 @@ class MainActivity : Activity() {
                             replay.apply(packet)
                             if (packet.sector != null || packet.kind == 0x19) sectorEpoch = packet.epochSeconds
                             updates++
+                            if (pauseOnErrors && packet.kind == 0x19 &&
+                                packet.epochSeconds in errorNorthTimes) {
+                                pause()
+                                break
+                            }
                         }
                         if (updates > 0) refreshFrame()
+                        if (!playing && pauseOnErrors) info.text =
+                            "Replay pause: NORTH / sector error στο τρέχον frame"
                         updateSweep(targetEpoch)
                         if (record >= packets.size) pause()
                     } else {
@@ -648,6 +674,39 @@ class MainActivity : Activity() {
             .setPositiveButton("OK", null).show()
     }
 
+    private fun showCurrentScanRaw() {
+        val data = capture ?: return
+        if (data.packets.isEmpty()) return
+        val last = (record-1).coerceIn(0,data.packets.lastIndex)
+        var first = last
+        while (first > 0 && data.packets[first].kind != 0x19) first--
+        val summary = buildString {
+            appendLine("CURRENT SCAN RAW — NORTH / SECTORS")
+            appendLine("Αρχείο: ${data.name}")
+            appendLine("Packets #${first+1}..${last+1}")
+            for (i in first..last) {
+                val p=data.packets[i]
+                appendLine()
+                appendLine("Frame ${p.frameNo}, ${p.epochSeconds}s, TYPE 0x${"%02X".format(p.kind)} SECTOR ${p.sector?.let{"%02X".format(it)} ?: "--"}")
+                appendLine(p.payload.joinToString(" ") { "%02X".format(it.toInt() and 255) })
+            }
+        }
+        val text=TextView(this).apply {
+            setText(summary); textSize=10f; setTextColor(fg); setTextIsSelectable(true)
+            setPadding(dp(13),dp(12),dp(13),dp(12))
+        }
+        AlertDialog.Builder(this).setTitle("Current Scan RAW")
+            .setView(ScrollView(this).apply { addView(text) })
+            .setPositiveButton("Κλείσιμο",null)
+            .setNeutralButton("Share") { _,_ ->
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type="text/plain"
+                    putExtra(Intent.EXTRA_TEXT,summary)
+                }
+                startActivity(Intent.createChooser(send,"Κοινοποίηση Scan RAW"))
+            }.show()
+    }
+
     private fun showSettings() {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -678,6 +737,12 @@ class MainActivity : Activity() {
             })
         }
         layout.addView(sizes)
+        val pauseError = CheckBox(this).apply {
+            text = "Pause Replay σε NORTH / sector missing"
+            textSize = 12f
+            isChecked = pauseOnErrors
+        }
+        layout.addView(pauseError)
         layout.addView(title("Ανοιχτό γκρι RADAR • κόκκινοι δακτύλιοι • αρχική κλίμακα 20 NM",11f))
         AlertDialog.Builder(this)
             .setTitle("Ρυθμίσεις AIRCAT500")
@@ -686,11 +751,13 @@ class MainActivity : Activity() {
                 val rangeNm = (range.text.toString().toFloatOrNull() ?: 250f).coerceIn(20f,1000f)
                 maxRangeNm = rangeNm
                 aircraftLabelSp = sizes.progress.toFloat().coerceIn(7f,20f)
+                pauseOnErrors = pauseError.isChecked
                 radar.maxRangeNm = rangeNm
                 radar.labelSizeSp = aircraftLabelSp
                 getSharedPreferences("aircat_v2_settings",MODE_PRIVATE).edit()
                     .putFloat("max_range_nm",maxRangeNm)
-                    .putFloat("label_size_sp",aircraftLabelSp).apply()
+                    .putFloat("label_size_sp",aircraftLabelSp)
+                    .putBoolean("pause_on_north_errors",pauseOnErrors).apply()
             }
             .setNeutralButton("About") { _, _ -> showAbout() }
             .setNegativeButton("Άκυρο",null)
