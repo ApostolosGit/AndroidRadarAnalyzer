@@ -1,6 +1,18 @@
-# AIRCAT500 Mobile v2.1 (AndroidRadarAnalyzer)
+# AIRCAT500 Mobile v2.2 (AndroidRadarAnalyzer)
 
 Native Kotlin Android application **based on the verified AIRCAT500 Analyzer v9.16 for Windows** and the tested AIRCAT500 Mobile v0.2 radar playback.
+
+## v2.2 fixes (over v2.1)
+
+- Android APK version name **2.2** (not 2.2.0) and downloadable APK filename **AIRCAT500_V2.2.apk**.
+- Default menu/report/summary text **16sp**, independently adjustable **13–20sp**.
+- Complete **Errors** and **Alerts** contents scroll correctly; those views no longer inherit the 3-line title truncation.
+- Full report starts with a single v2.2 title followed **immediately by capture filename**; removed preambles and limited separator rules to **50 characters**.
+- Chart data, colours and zoom remain unchanged; only the **X-axis labels** are drawn farther below the axis.
+- Permanent blue range rings at **5-NM intervals up to 220 NM by default**. Settings slider chooses outermost ring from **5–500 NM** in 5-NM steps; NM labels remain anchored to axes.
+- **Reset** re-centres the radar and restores **20 NM** without changing replay time or playback state.
+- **Radar Zoom +/−** buttons are embedded in its top-right corner. Two-finger pinch zoom has been disabled; dragging labels and panning radar remain.
+- Previous v2.1 target retention, labels, decoding, report sharing and replay are retained.
 
 ## v2.1 improvements (over v2.0)
 
