@@ -177,7 +177,9 @@ class RadarView(context: Context) : View(context) {
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = dp(.8f)
             paint.color = Color.argb(132, 65, 65, 65)
-            for ((_, trail) in current.trackTrail) {
+            val activeNumbers = tracks.map { it.number }.toSet()
+            for ((number, trail) in current.trackTrail) {
+                if (number !in activeNumbers) continue
                 val visibleTrail = trail.filter { filter.allows(it) }
                 if (visibleTrail.size < 2) continue
                 var previous = pointFor(visibleTrail.first(), cx, cy, radius)
