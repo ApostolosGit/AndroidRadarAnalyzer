@@ -30,13 +30,26 @@ object AircatDesktopSummary {
         else emptyList()
         val extension = window.count { it.kind == 0x0D }
         val weather = window.count { it.kind == 0x2A }
-        // A sector is "without prev North" only when no NORTH has been seen;
-        // don't fabricate a count from missing-sector statistics.
+        // Match the desktop v9.16 extra-scan bucket heuristic: a wrap
+        // from sector >=20 to sector <=7 with drop >=16 starts a scan
+        // without its own preceding NORTH in invalid cycles.
         val beforeNorth = IntArray(32)
-        var sawNorth = false
-        for (packet in capture.packets) {
-            if (packet.kind == 0x19) sawNorth = true
-            else if (!sawNorth) packet.sector?.let { if (it in 0..31) beforeNorth[it]++ }
+        val firstNorth = capture.packets.indexOfFirst { it.kind == 0x19 }
+        val leading = if (firstNorth >= 0) capture.packets.take(firstNorth) else capture.packets
+        for (packet in leading) packet.sector?.let { if (it in 0..31) beforeNorth[it]++ }
+        for (cycle in stats.cycles.filter { it.invalid }) {
+            val sectors = capture.packets.asSequence()
+                .filter { it.epochSeconds >= cycle.firstTime &&
+                    it.epochSeconds < cycle.nextTime }
+                .mapNotNull { it.sector }.toList()
+            var previous: Int? = null
+            var extraScan = false
+            for (sector in sectors) {
+                if (previous != null && sector <= 7 && previous >= 20 &&
+                    previous - sector >= 16) extraScan = true
+                if (extraScan && sector in 0..31) beforeNorth[sector]++
+                previous = sector
+            }
         }
         val blue = listOf(valid,extension,weather) + List(32){valid}
         val red = listOf(stats.invalidCycles,0,0) + (0..31).map { stats.missingCounts[it] }
