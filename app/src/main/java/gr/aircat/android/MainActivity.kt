@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -22,6 +23,8 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import java.io.InputStreamReader
+import java.io.FilterInputStream
+import java.io.InputStream
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -46,6 +49,9 @@ class MainActivity : Activity() {
     private var chartMode = 0
     private var currentFilter = RadarFilter()
     private var pendingReport: String? = null
+    private var lastFullReport: String? = null
+    private var maxRangeNm = 250f
+    private var aircraftLabelSp = 9f
 
     private lateinit var info: TextView
     private lateinit var monitor: TextView
@@ -54,6 +60,8 @@ class MainActivity : Activity() {
     private lateinit var radar: RadarView
     private lateinit var chart: ChartView
     private lateinit var progress: ProgressBar
+    private lateinit var progressText: TextView
+    private lateinit var chartToolbar: LinearLayout
     private lateinit var seek: SeekBar
     private lateinit var play: Button
     private lateinit var rate: Button
@@ -64,8 +72,9 @@ class MainActivity : Activity() {
     private lateinit var showViews: Array<View>
     private lateinit var tabButtons: Array<Button>
 
-    private val fg = Color.rgb(16, 20, 22)
-    private val bg = Color.rgb(235, 237, 239)
+    private val fg = Color.rgb(19, 57, 81)
+    private val bg = Color.rgb(224, 243, 253)
+    private val buttonBlue = Color.rgb(189, 230, 250)
     private fun dp(x: Int) = (x * resources.displayMetrics.density + .5f).toInt()
     private fun title(text: String, size: Float = 12f) = TextView(this).apply {
         this.text = text
@@ -78,8 +87,13 @@ class MainActivity : Activity() {
         this.text = text
         textSize = size
         isAllCaps = false
-        setTextColor(Color.BLACK)
-        setPadding(dp(1), dp(1), dp(1), dp(1))
+        minWidth = 0
+        minimumWidth = 0
+        minHeight = 0
+        minimumHeight = 0
+        setTextColor(fg)
+        backgroundTintList = ColorStateList.valueOf(buttonBlue)
+        setPadding(0, 0, 0, 0)
         setOnClickListener { onTap() }
     }
     private fun row(vararg views: View, height: Int = 43) = LinearLayout(this).apply {
@@ -94,8 +108,11 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = Color.rgb(49, 56, 60)
-        window.navigationBarColor = Color.rgb(49, 56, 60)
+        window.statusBarColor = Color.rgb(65, 143, 184)
+        window.navigationBarColor = Color.rgb(65, 143, 184)
+        val prefs = getSharedPreferences("aircat_v2_settings", MODE_PRIVATE)
+        maxRangeNm = prefs.getFloat("max_range_nm", 250f)
+        aircraftLabelSp = prefs.getFloat("label_size_sp", 9f)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
@@ -114,15 +131,23 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v1.0.2", 17f))
+        root.addView(title("AIRCAT500 Mobile  v2.0", 17f))
         val open = button("Άνοιγμα", 11f) { chooseFile() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
-        val export = button("Report", 11f) { exportReport() }
-        root.addView(row(open, filter, export))
+        val export = button("Report", 10f) { showReport() }
+        val settings = button("Ρυθμίσεις", 9f) { showSettings() }
+        root.addView(row(open, filter, export, settings, height = 41))
         info = title("Άνοιξε αρχείο CSV, BIN, PCAP ή PCAPNG για Offline Replay.", 12f)
         root.addView(info)
-        progress = ProgressBar(this).apply { visibility = View.GONE; isIndeterminate = true }
-        root.addView(progress, LinearLayout.LayoutParams(-1, dp(4)))
+        progressText = title("", 11f).apply { visibility = View.GONE }
+        root.addView(progressText)
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            visibility = View.GONE
+            isIndeterminate = false
+            max = 100
+            progressTintList = ColorStateList.valueOf(Color.rgb(29, 121, 175))
+        }
+        root.addView(progress, LinearLayout.LayoutParams(-1, dp(9)))
 
         tabButtons = arrayOf(
             button("Radar", 10f) { showTab(0) },
@@ -138,6 +163,8 @@ class MainActivity : Activity() {
         radar = RadarView(this).apply {
             state = replay
             this.filter = currentFilter
+            maxRangeNm = this@MainActivity.maxRangeNm
+            labelSizeSp = aircraftLabelSp
             onTrackTap = { track -> showTrack(track) }
         }
         monitor = title("Δεν έχει φορτωθεί αρχείο.")
@@ -147,12 +174,16 @@ class MainActivity : Activity() {
         val views: Array<View> = arrayOf(radar, scrollText(monitor), scrollText(errors), scrollText(alerts), chart)
         showViews = views
         views.forEach { body.addView(it, LinearLayout.LayoutParams(-1, 0, 1f)) }
-        chartModeButton = button("SECTOR PACKETS  ▾", 11f) {
-            chartMode = (chartMode + 1) % 4
+        chartModeButton = button("PY 35 BARS  ▾", 10f) {
+            chartMode = (chartMode + 1) % 5
             chart.chartMode = chartMode
-            chartModeButton.text = listOf("SECTOR PACKETS  ▾", "MISSING SECTORS  ▾", "AIRCAT TYPES  ▾", "ALERTS  ▾")[chartMode]
+            chartModeButton.text = listOf("PY 35 BARS ▾","SECTOR PACKETS ▾",
+                "MISSING SECTORS ▾","AIRCAT TYPES ▾","ALERTS ▾")[chartMode]
         }
-        root.addView(chartModeButton, LinearLayout.LayoutParams(-1, dp(35)))
+        chartToolbar = row(chartModeButton,
+            button("Zoom Peak",10f) { chart.peakZoom() },
+            button("Zoom Out",10f) { chart.resetZoom() }, height = 38)
+        root.addView(chartToolbar)
         timelineLabel = title("Χρόνος Replay  00:00 / 00:00", 11f)
         root.addView(timelineLabel)
         seek = SeekBar(this).apply {
@@ -204,7 +235,7 @@ class MainActivity : Activity() {
         if (!::showViews.isInitialized) return
         for ((i, view) in showViews.withIndex()) view.visibility = if (i == index) View.VISIBLE else View.GONE
         for ((i, btn) in tabButtons.withIndex()) btn.alpha = if (i == index) 1f else .69f
-        chartModeButton.visibility = if (index == 4) View.VISIBLE else View.GONE
+        chartToolbar.visibility = if (index == 4) View.VISIBLE else View.GONE
         if (index == 1 || index == 2 || index == 3) refreshAnalysisPages()
     }
 
