@@ -12,6 +12,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.View
+import android.view.Gravity
+import android.widget.FrameLayout
 import android.view.WindowInsets
 import android.widget.Button
 import android.widget.CheckBox
@@ -198,7 +200,23 @@ class MainActivity : Activity() {
             setTextIsSelectable(true)
         }
         chart = ChartView(this).apply { uiFontSp = uiTextSp }
-        val views: Array<View> = arrayOf(radar, scrollText(monitor), scrollText(errors), scrollText(alerts), chart)
+        // Keep the zoom controls inside the radar surface, independently
+        // touchable at the upper-right; no two-finger zoom gesture.
+        val radarFrame = FrameLayout(this)
+        radarFrame.addView(radar, FrameLayout.LayoutParams(-1, -1))
+        val radarZoomControls = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(button("+", 16f) { radar.zoom = radar.zoom * 1.25f },
+                LinearLayout.LayoutParams(dp(46), dp(46)))
+            addView(button("−", 16f) { radar.zoom = radar.zoom / 1.25f },
+                LinearLayout.LayoutParams(dp(46), dp(46)))
+        }
+        radarFrame.addView(radarZoomControls,
+            FrameLayout.LayoutParams(dp(48), -2, Gravity.TOP or Gravity.END).apply {
+                topMargin = dp(9)
+                marginEnd = dp(9)
+            })
+        val views: Array<View> = arrayOf(radarFrame, scrollText(monitor), scrollText(errors), scrollText(alerts), chart)
         showViews = views
         views.forEach { body.addView(it, LinearLayout.LayoutParams(-1, 0, 1f)) }
         chartModeButton = button("PY 35 BARS  ▾", 10f) {
@@ -254,7 +272,7 @@ class MainActivity : Activity() {
             if (playing) resetClock()
         }
         root.addView(row(reverseButton, play, forwardButton, rate,
-            button("⏮ Reset") { jumpTo(0) }, height = 43))
+            button("⏮ Reset") { radar.resetViewport(); showTab(0) }, height = 43))
         root.addView(row(
             button("◀ −1 Frame") { jumpTo((record-2).coerceAtLeast(0)) },
             button("+1 Frame ▶") { jumpTo(record) }, height = 36))
@@ -782,6 +800,21 @@ class MainActivity : Activity() {
             })
         }
         layout.addView(allSizes)
+        val ringLabel = title("Μέγιστος κύκλος: ${maxRingNm} NM (βήμα 5 NM)",16f)
+        layout.addView(ringLabel)
+        val ringSlider = SeekBar(this).apply {
+            max = 100
+            if (Build.VERSION.SDK_INT >= 26) min = 1
+            progress = maxRingNm / 5
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, step: Int, fromUser: Boolean) {
+                    ringLabel.text = "Μέγιστος κύκλος: ${step.coerceIn(1,100)*5} NM (βήμα 5 NM)"
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+        }
+        layout.addView(ringSlider)
         val pauseError = CheckBox(this).apply {
             text = "Pause Replay σε NORTH / sector missing"
             textSize = uiTextSp
@@ -791,20 +824,23 @@ class MainActivity : Activity() {
         layout.addView(title("Ανοιχτό γκρι RADAR • μπλε δακτύλιοι • αρχική κλίμακα 20 NM",11f))
         AlertDialog.Builder(this)
             .setTitle("Ρυθμίσεις AIRCAT500")
-            .setView(layout)
+            .setView(ScrollView(this).apply { addView(layout) })
             .setPositiveButton("Εφαρμογή") { _, _ ->
                 val rangeNm = (range.text.toString().toFloatOrNull() ?: 250f).coerceIn(20f,1000f)
                 maxRangeNm = rangeNm
                 aircraftLabelSp = sizes.progress.toFloat().coerceIn(7f,16f)
                 uiTextSp = allSizes.progress.toFloat().coerceIn(13f,20f)
                 pauseOnErrors = pauseError.isChecked
+                maxRingNm = ringSlider.progress.coerceIn(1,100)*5
                 radar.maxRangeNm = rangeNm
+                radar.maxRingNm = maxRingNm
                 radar.labelSizeSp = aircraftLabelSp
                 applyUiFontSize()
                 getSharedPreferences("aircat_v2_settings",MODE_PRIVATE).edit()
                     .putFloat("max_range_nm",maxRangeNm)
                     .putFloat("label_size_sp",aircraftLabelSp)
                     .putFloat("all_text_size_sp",uiTextSp)
+                    .putInt("max_ring_nm",maxRingNm)
                     .putBoolean("pause_on_north_errors",pauseOnErrors).apply()
             }
             .setNeutralButton("About") { _, _ -> showAbout() }
@@ -818,10 +854,10 @@ class MainActivity : Activity() {
             .setMessage("AIRCAT500 Mobile v$version\n" +
                 "Android offline radar analysis & replay\n" +
                 "Decoder: AIRCAT500 BSC / CSV / BIN / PCAP / PCAPNG\n" +
-                "Radar: 20 NM initial, configurable max 250 NM\n" +
+                "Radar: 20 NM initial, 5 NM rings up to ${maxRingNm} NM\n" +
                 "Desktop reference: Python Analyzer v9.16\n" +
                 "SYNC2USB live Wi-Fi/USB: not included in this build.\n" +
-                "Version v2.1 preserves the original decoder and improves scan rendering and labels.")
+                "Version v2.2: restored Errors/Alerts, axis labels and zoom buttons.")
             .setPositiveButton("OK",null).show()
     }
 
@@ -841,7 +877,7 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(249,252,254))
             addView(text)
         }
-        AlertDialog.Builder(this).setTitle("AIRCAT500 v2 — Αναλυτικό Report")
+        AlertDialog.Builder(this).setTitle("AIRCAT500 v2.2 — Αναλυτικό Report")
             .setView(scroll)
             .setPositiveButton("Κλείσιμο",null)
             .setNeutralButton("Αποθήκευση") { _,_ -> exportReport() }
@@ -868,7 +904,7 @@ class MainActivity : Activity() {
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "text/plain"
-            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_v2_Analytical_Report.txt")
+            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_V2.2_Report.txt")
         }
         startActivityForResult(intent, 78)
     }
