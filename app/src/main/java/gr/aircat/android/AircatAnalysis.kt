@@ -12,7 +12,19 @@ data class RadarFilter(
     val showOnlyAlerts: Boolean = false, val hideInvalidMode: Boolean = false,
     val minAltitudeFeet: Int? = null, val maxAltitudeFeet: Int? = null,
     val minSpeedKt: Int? = null, val maxSpeedKt: Int? = null,
-    val showRangeLabel: Boolean = false
+    val showRangeLabel: Boolean = false,
+    val showModeALabel: Boolean = true,
+    val showModeCLabel: Boolean = true,
+    val showTrackNumberLabel: Boolean = true,
+    val showSpeedLabel: Boolean = false,
+    val showQualityLabel: Boolean = false,
+    val showMissesLabel: Boolean = false,
+    val showTprLabel: Boolean = false,
+    val showLogSigmaLabel: Boolean = false,
+    val showNorthTimeLabel: Boolean = false,
+    val showTrackingWindowLabel: Boolean = false,
+    val showSmoothingLabel: Boolean = false,
+    val showVelocityVector: Boolean = false
 ) {
     fun allows(track: RadarTrack): Boolean {
         val altitude = track.modeC?.removeSuffix("ft")?.toIntOrNull()

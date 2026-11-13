@@ -1,6 +1,18 @@
-# AIRCAT500 Mobile v1.0 (AndroidRadarAnalyzer)
+# AIRCAT500 Mobile v2.0 (AndroidRadarAnalyzer)
 
 Native Kotlin Android application **based on the verified AIRCAT500 Analyzer v9.16 for Windows** and the tested AIRCAT500 Mobile v0.2 radar playback.
+
+## v2.0 additions (over v1.0.2)
+
+- **Aviation UI:** light-blue menus and buttons, light-grey radar, unchanged black Δ/U/○ aircraft symbols and persistent red range rings.
+- **Settings:** same top row as Open / Filters / Report; initial 20 NM, configurable maximum radar range (default 250 NM), aircraft label text size, About, optional pause on NORTH/sector errors.
+- **Desktop labels:** individually selectable Mode A, Mode C, Track Number, Speed (kt), Range (NM), Quality Q, detection misses, TPR, LogSigma, time since NORTH, tracking window, smoothing K and relative velocity-vector cue. Speed Label defaults OFF, Mode A/C defaults ON.
+- **File loading:** actual document-byte progress from 0–75% when provider exposes file length, then analysis, chart/report generation stages up to 100%.
+- **Charts:** initial desktop-style 35-column stacked North/Extension/Weather/00..1F chart (blue Correct, red Sector missing, pink Sector without previous North), Zoom Peak / Zoom Out, swipe and pinch for small screens. Mobile available decoder statistics are used; some desktop counters are not fully equivalent.
+- **Errors / Alerts:** extended numeric summary, missing sectors by ID, NORTH cycle detail, per-source alert and validation summaries.
+- **Report:** full capture-derived report opened on import, also available under Report, with Save TXT and Android share sheet (Viber if installed).
+- **Replay / RAW:** forward/backwards 1×–16×, time scrub, Reset/Step Back, optional pause at NORTH errors, one-touch Current Scan RAW in Monitor.
+- Does **not** change label dragging or introduce new emergency/alert symbology. **Not certified for operational ATC use.**
 
 ## Features (offline v1.0)
 

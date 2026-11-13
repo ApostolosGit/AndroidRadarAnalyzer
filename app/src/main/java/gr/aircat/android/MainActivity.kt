@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -22,6 +23,8 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import java.io.InputStreamReader
+import java.io.FilterInputStream
+import java.io.InputStream
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -46,6 +49,13 @@ class MainActivity : Activity() {
     private var chartMode = 0
     private var currentFilter = RadarFilter()
     private var pendingReport: String? = null
+    private var lastFullReport: String? = null
+    private var lastErrorSummary: String? = null
+    private var lastAlertSummary: String? = null
+    private var maxRangeNm = 250f
+    private var aircraftLabelSp = 9f
+    private var pauseOnErrors = false
+    private var errorNorthTimes: Set<Double> = emptySet()
 
     private lateinit var info: TextView
     private lateinit var monitor: TextView
@@ -54,6 +64,9 @@ class MainActivity : Activity() {
     private lateinit var radar: RadarView
     private lateinit var chart: ChartView
     private lateinit var progress: ProgressBar
+    private lateinit var progressText: TextView
+    private lateinit var chartToolbar: LinearLayout
+    private lateinit var monitorToolbar: LinearLayout
     private lateinit var seek: SeekBar
     private lateinit var play: Button
     private lateinit var rate: Button
@@ -64,8 +77,9 @@ class MainActivity : Activity() {
     private lateinit var showViews: Array<View>
     private lateinit var tabButtons: Array<Button>
 
-    private val fg = Color.rgb(16, 20, 22)
-    private val bg = Color.rgb(235, 237, 239)
+    private val fg = Color.rgb(19, 57, 81)
+    private val bg = Color.rgb(224, 243, 253)
+    private val buttonBlue = Color.rgb(189, 230, 250)
     private fun dp(x: Int) = (x * resources.displayMetrics.density + .5f).toInt()
     private fun title(text: String, size: Float = 12f) = TextView(this).apply {
         this.text = text
@@ -78,8 +92,13 @@ class MainActivity : Activity() {
         this.text = text
         textSize = size
         isAllCaps = false
-        setTextColor(Color.BLACK)
-        setPadding(dp(1), dp(1), dp(1), dp(1))
+        minWidth = 0
+        minimumWidth = 0
+        minHeight = 0
+        minimumHeight = 0
+        setTextColor(fg)
+        backgroundTintList = ColorStateList.valueOf(buttonBlue)
+        setPadding(0, 0, 0, 0)
         setOnClickListener { onTap() }
     }
     private fun row(vararg views: View, height: Int = 43) = LinearLayout(this).apply {
@@ -94,8 +113,12 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = Color.rgb(49, 56, 60)
-        window.navigationBarColor = Color.rgb(49, 56, 60)
+        window.statusBarColor = Color.rgb(65, 143, 184)
+        window.navigationBarColor = Color.rgb(65, 143, 184)
+        val prefs = getSharedPreferences("aircat_v2_settings", MODE_PRIVATE)
+        maxRangeNm = prefs.getFloat("max_range_nm", 250f)
+        aircraftLabelSp = prefs.getFloat("label_size_sp", 9f)
+        pauseOnErrors = prefs.getBoolean("pause_on_north_errors", false)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
@@ -114,15 +137,23 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v1.0.2", 17f))
+        root.addView(title("AIRCAT500 Mobile  v2.0", 17f))
         val open = button("Άνοιγμα", 11f) { chooseFile() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
-        val export = button("Report", 11f) { exportReport() }
-        root.addView(row(open, filter, export))
+        val export = button("Report", 10f) { showReport() }
+        val settings = button("Ρυθμίσεις", 9f) { showSettings() }
+        root.addView(row(open, filter, export, settings, height = 41))
         info = title("Άνοιξε αρχείο CSV, BIN, PCAP ή PCAPNG για Offline Replay.", 12f)
         root.addView(info)
-        progress = ProgressBar(this).apply { visibility = View.GONE; isIndeterminate = true }
-        root.addView(progress, LinearLayout.LayoutParams(-1, dp(4)))
+        progressText = title("", 11f).apply { visibility = View.GONE }
+        root.addView(progressText)
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            visibility = View.GONE
+            isIndeterminate = false
+            max = 100
+            progressTintList = ColorStateList.valueOf(Color.rgb(29, 121, 175))
+        }
+        root.addView(progress, LinearLayout.LayoutParams(-1, dp(9)))
 
         tabButtons = arrayOf(
             button("Radar", 10f) { showTab(0) },
@@ -138,6 +169,8 @@ class MainActivity : Activity() {
         radar = RadarView(this).apply {
             state = replay
             this.filter = currentFilter
+            maxRangeNm = this@MainActivity.maxRangeNm
+            labelSizeSp = aircraftLabelSp
             onTrackTap = { track -> showTrack(track) }
         }
         monitor = title("Δεν έχει φορτωθεί αρχείο.")
@@ -147,12 +180,18 @@ class MainActivity : Activity() {
         val views: Array<View> = arrayOf(radar, scrollText(monitor), scrollText(errors), scrollText(alerts), chart)
         showViews = views
         views.forEach { body.addView(it, LinearLayout.LayoutParams(-1, 0, 1f)) }
-        chartModeButton = button("SECTOR PACKETS  ▾", 11f) {
-            chartMode = (chartMode + 1) % 4
+        chartModeButton = button("PY 35 BARS  ▾", 10f) {
+            chartMode = (chartMode + 1) % 5
             chart.chartMode = chartMode
-            chartModeButton.text = listOf("SECTOR PACKETS  ▾", "MISSING SECTORS  ▾", "AIRCAT TYPES  ▾", "ALERTS  ▾")[chartMode]
+            chartModeButton.text = listOf("PY 35 BARS ▾","SECTOR PACKETS ▾",
+                "MISSING SECTORS ▾","AIRCAT TYPES ▾","ALERTS ▾")[chartMode]
         }
-        root.addView(chartModeButton, LinearLayout.LayoutParams(-1, dp(35)))
+        chartToolbar = row(chartModeButton,
+            button("Zoom Peak",10f) { chart.peakZoom() },
+            button("Zoom Out",10f) { chart.resetZoom() }, height = 38)
+        root.addView(chartToolbar)
+        monitorToolbar = row(button("Current Scan RAW") { showCurrentScanRaw() }, height = 36)
+        root.addView(monitorToolbar)
         timelineLabel = title("Χρόνος Replay  00:00 / 00:00", 11f)
         root.addView(timelineLabel)
         seek = SeekBar(this).apply {
@@ -194,7 +233,9 @@ class MainActivity : Activity() {
             if (playing) resetClock()
         }
         root.addView(row(reverseButton, play, forwardButton, rate,
-            button("+1") { jumpTo(record) }, height = 45))
+            button("+1") { jumpTo(record) }, height = 43))
+        root.addView(row(button("⏮ Reset") { jumpTo(0) },
+            button("◀ -1 Frame") { jumpTo((record-2).coerceAtLeast(0)) }, height = 34))
         showTab(0)
         ui.post(ticker)
     }
@@ -204,7 +245,8 @@ class MainActivity : Activity() {
         if (!::showViews.isInitialized) return
         for ((i, view) in showViews.withIndex()) view.visibility = if (i == index) View.VISIBLE else View.GONE
         for ((i, btn) in tabButtons.withIndex()) btn.alpha = if (i == index) 1f else .69f
-        chartModeButton.visibility = if (index == 4) View.VISIBLE else View.GONE
+        chartToolbar.visibility = if (index == 4) View.VISIBLE else View.GONE
+        monitorToolbar.visibility = if (index == 1) View.VISIBLE else View.GONE
         if (index == 1 || index == 2 || index == 3) refreshAnalysisPages()
     }
 
@@ -241,21 +283,53 @@ class MainActivity : Activity() {
         }
         if (requestCode != 77) return
         pause()
-        progress.visibility = View.VISIBLE
-        info.text = "Ανάγνωση AIRCAT500 αρχείου..."
+        setLoadProgress(0,"Έναρξη φόρτωσης...")
         worker.execute {
             try {
                 val rawName = android.provider.OpenableColumns.DISPLAY_NAME
                 var filename = uri.lastPathSegment?.substringAfterLast('/') ?: "capture.dat"
-                contentResolver.query(uri, arrayOf(rawName), null, null, null)?.use {
-                    if (it.moveToFirst()) filename = it.getString(0) ?: filename
+                var totalBytes = -1L
+                contentResolver.query(uri, arrayOf(rawName, android.provider.OpenableColumns.SIZE),
+                    null, null, null)?.use {
+                    if (it.moveToFirst()) {
+                        filename = it.getString(0) ?: filename
+                        if (!it.isNull(1)) totalBytes = it.getLong(1)
+                    }
+                }
+                val expectedBytes = totalBytes
+                fun loadInput(): InputStream {
+                    val stream = contentResolver.openInputStream(uri)
+                        ?: error("Δεν μπορεί να ανοιχθεί το αρχείο")
+                    var seen = 0L
+                    var lastPct = -1
+                    return object : FilterInputStream(stream) {
+                        private fun counted(n: Int) {
+                            if (n <= 0 || expectedBytes <= 0) return
+                            seen += n.toLong()
+                            val pct = (75L * seen / expectedBytes).toInt().coerceIn(0,75)
+                            if (pct != lastPct) {
+                                lastPct=pct
+                                setLoadProgress(pct,"Ανάγνωση αρχείου: ${(seen * 100L / expectedBytes).coerceIn(0,100)}%")
+                            }
+                        }
+                        override fun read(): Int {
+                            val value=super.read()
+                            if (value>=0) counted(1)
+                            return value
+                        }
+                        override fun read(b: ByteArray, off: Int, len: Int): Int {
+                            val n=super.read(b,off,len)
+                            counted(n)
+                            return n
+                        }
+                    }
                 }
                 val ext = filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
                 val loaded: RadarCapture
                 val sourceNote: String
                 when (ext) {
                     "bin" -> {
-                        val raw = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        val raw = loadInput().use { it.readBytes() }
                             ?: error("Δεν μπορεί να διαβαστεί το BIN")
                         require(raw.size <= 60 * 1024 * 1024) { "BIN υπερβαίνει το όριο 60 MB" }
                         val result = AircatBsc.import(raw, filename)
@@ -263,7 +337,7 @@ class MainActivity : Activity() {
                         sourceNote = "BSC CRC: ${result.status.valid} OK / ${result.status.crcFailed} FAIL"
                     }
                     "pcap", "pcapng" -> {
-                        val raw = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        val raw = loadInput().use { it.readBytes() }
                             ?: error("Δεν μπορεί να διαβαστεί το PCAP")
                         require(raw.size <= 60 * 1024 * 1024) { "PCAP υπερβαίνει το όριο 60 MB" }
                         val result = AircatPcap.import(raw, filename)
@@ -271,13 +345,30 @@ class MainActivity : Activity() {
                         sourceNote = "UDP: ${result.udpPackets} / ${result.inspectedPackets} frames"
                     }
                     else -> {
-                        loaded = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use {
+                        loaded = loadInput().bufferedReader(Charsets.UTF_8).use {
                             AircatCsv.read(it, filename)
                         } ?: error("Το CSV δεν είναι διαθέσιμο")
                         sourceNote = "CSV CRC-valid payloads"
                     }
                 }
+                setLoadProgress(78,"Ανάλυση NORTH / sectors / CRC...")
                 val analysis = AircatAnalysis.analyze(loaded)
+                setLoadProgress(89,"Σύνοψη Errors / Alerts και Charts...")
+                val bars = AircatDesktopSummary.sectorBars(loaded,analysis)
+                val median = analysis.medianPeriod
+                val northPackets = loaded.packets.filter { it.kind == 0x19 }
+                val missedNorthTimes = if (median != null && median > 0)
+                    northPackets.zipWithNext().filter { (a,b) ->
+                        b.epochSeconds-a.epochSeconds > median*1.9
+                    }.map { it.second.epochSeconds }
+                else emptyList()
+                val pauseNorthTimes = (analysis.cycles.filter { it.invalid }.map { it.nextTime } +
+                    missedNorthTimes).toSet()
+                val errorSummary = AircatDesktopSummary.errors(loaded,analysis)
+                val alertSummary = AircatDesktopSummary.alerts(loaded,analysis)
+                setLoadProgress(95,"Δημιουργία αναλυτικού Report...")
+                val full = AircatDesktopSummary.report(loaded,analysis)
+                setLoadProgress(100,"Ολοκληρώθηκε: 100%")
                 runOnUiThread {
                     capture = loaded
                     diagnostics = analysis
@@ -286,20 +377,44 @@ class MainActivity : Activity() {
                     northIndexes = loaded.packets.indices.filter { loaded.packets[it].kind == 0x19 }.toIntArray()
                     replayDirection = 1
                     chart.diagnostics = analysis
+                    chart.desktopBars = bars
+                    chart.chartMode = 0
+                    chartMode = 0
+                    chartModeButton.text = "PY 35 BARS ▾"
+                    lastFullReport = full
+                    errorNorthTimes = pauseNorthTimes
+                    lastErrorSummary = errorSummary
+                    lastAlertSummary = alertSummary
                     refreshAnalysisPages()
-                    progress.visibility = View.GONE
                     showTab(0)
                     jumpTo(0)
                     start() // Keep v0.2's successful autoplay.
+                    showReport() // Python-style full analysis is available immediately.
+                    ui.postDelayed({ hideLoadProgress() }, 1400)
                     android.widget.Toast.makeText(this, "$sourceNote • ${loaded.summary.packets} frames", android.widget.Toast.LENGTH_LONG).show()
                 }
             } catch (ex: Exception) {
                 runOnUiThread {
-                    progress.visibility = View.GONE
+                    hideLoadProgress()
                     info.text = "Σφάλμα εισαγωγής: ${ex.message ?: "μη έγκυρο αρχείο"}"
                 }
             }
         }
+    }
+
+    private fun setLoadProgress(pct: Int, stage: String) {
+        runOnUiThread {
+            if (!::progress.isInitialized) return@runOnUiThread
+            progress.visibility = View.VISIBLE
+            progressText.visibility = View.VISIBLE
+            progress.progress = pct.coerceIn(0,100)
+            progressText.text = "${pct.coerceIn(0,100)}%  •  $stage"
+            info.text = stage
+        }
+    }
+    private fun hideLoadProgress() {
+        progress.visibility = View.GONE
+        progressText.visibility = View.GONE
     }
 
     private fun pause() {
@@ -368,8 +483,15 @@ class MainActivity : Activity() {
                             replay.apply(packet)
                             if (packet.sector != null || packet.kind == 0x19) sectorEpoch = packet.epochSeconds
                             updates++
+                            if (pauseOnErrors && packet.kind == 0x19 &&
+                                packet.epochSeconds in errorNorthTimes) {
+                                pause()
+                                break
+                            }
                         }
                         if (updates > 0) refreshFrame()
+                        if (!playing && pauseOnErrors) info.text =
+                            "Replay pause: NORTH / sector error στο τρέχον frame"
                         updateSweep(targetEpoch)
                         if (record >= packets.size) pause()
                     } else {
@@ -433,19 +555,27 @@ class MainActivity : Activity() {
         val stats = diagnostics ?: return
         val head = "${data.name}\n${data.summary.packets} frames • ${stats.completedCycles} complete cycles • ${data.summary.tracksDecoded} track elements"
         monitor.text = "$head\n\n${AircatReport.create(data, stats)}"
-        errors.text = AircatReport.errors(stats)
-        alerts.text = AircatReport.alerts(stats)
+        errors.text = lastErrorSummary ?: AircatDesktopSummary.errors(data, stats)
+        alerts.text = lastAlertSummary ?: AircatDesktopSummary.alerts(data, stats)
         chart.diagnostics = stats
     }
 
     private fun chooseFilters() {
         val previous = currentFilter
         val labels = listOf("PSR (Primary)", "MSSR / SSR", "Low quality",
-            "Cancelled tracks", "Ετικέτες Mode A/C", "Ίχνη τροχιάς",
-            "Μόνο alerts", "Κρύψε invalid Mode A/C", "Range NM στις ετικέτες")
+            "Cancelled tracks", "Ετικέτες στόχων", "Ίχνη τροχιάς",
+            "Μόνο alerts", "Κρύψε invalid Mode A/C", "Range Label (NM)",
+            "Mode A Label", "Mode C Label", "Track Number Label",
+            "Speed Label (kt)", "Quality Q Label", "Detection Misses Label",
+            "TPR Number Label", "LogSigma (SSR) Label", "Time Since North Label",
+            "Tracking Window Label", "Smoothing K Label", "Velocity Vector")
         val initial = listOf(previous.showPSR, previous.showMSSR, previous.showLowQuality,
             previous.showCancelled, previous.showLabels, previous.showTrails,
-            previous.showOnlyAlerts, previous.hideInvalidMode, previous.showRangeLabel)
+            previous.showOnlyAlerts, previous.hideInvalidMode, previous.showRangeLabel,
+            previous.showModeALabel, previous.showModeCLabel, previous.showTrackNumberLabel,
+            previous.showSpeedLabel, previous.showQualityLabel, previous.showMissesLabel,
+            previous.showTprLabel, previous.showLogSigmaLabel, previous.showNorthTimeLabel,
+            previous.showTrackingWindowLabel, previous.showSmoothingLabel, previous.showVelocityVector)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(8), dp(18), dp(8))
@@ -507,7 +637,11 @@ class MainActivity : Activity() {
                         checks[0].isChecked, checks[1].isChecked, checks[2].isChecked,
                         checks[3].isChecked, checks[4].isChecked, checks[5].isChecked,
                         checks[6].isChecked, checks[7].isChecked,
-                        minAlt, maxAlt, minSpd, maxSpd, checks[8].isChecked
+                        minAlt, maxAlt, minSpd, maxSpd, checks[8].isChecked,
+                        checks[9].isChecked, checks[10].isChecked, checks[11].isChecked,
+                        checks[12].isChecked, checks[13].isChecked, checks[14].isChecked,
+                        checks[15].isChecked, checks[16].isChecked, checks[17].isChecked,
+                        checks[18].isChecked, checks[19].isChecked, checks[20].isChecked
                     )
                     radar.filter = currentFilter
                     val newDepth = history.progress.coerceIn(2, 64)
@@ -540,14 +674,153 @@ class MainActivity : Activity() {
             .setPositiveButton("OK", null).show()
     }
 
+    private fun showCurrentScanRaw() {
+        val data = capture ?: return
+        if (data.packets.isEmpty()) return
+        val last = (record-1).coerceIn(0,data.packets.lastIndex)
+        var first = last
+        while (first > 0 && data.packets[first].kind != 0x19) first--
+        val summary = buildString {
+            appendLine("CURRENT SCAN RAW — NORTH / SECTORS")
+            appendLine("Αρχείο: ${data.name}")
+            appendLine("Packets #${first+1}..${last+1}")
+            for (i in first..last) {
+                val p=data.packets[i]
+                appendLine()
+                appendLine("Frame ${p.frameNo}, ${p.epochSeconds}s, TYPE 0x${"%02X".format(p.kind)} SECTOR ${p.sector?.let{"%02X".format(it)} ?: "--"}")
+                appendLine(p.payload.joinToString(" ") { "%02X".format(it.toInt() and 255) })
+            }
+        }
+        val text=TextView(this).apply {
+            setText(summary); textSize=10f; setTextColor(fg); setTextIsSelectable(true)
+            setPadding(dp(13),dp(12),dp(13),dp(12))
+        }
+        AlertDialog.Builder(this).setTitle("Current Scan RAW")
+            .setView(ScrollView(this).apply { addView(text) })
+            .setPositiveButton("Κλείσιμο",null)
+            .setNeutralButton("Share") { _,_ ->
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type="text/plain"
+                    putExtra(Intent.EXTRA_TEXT,summary)
+                }
+                startActivity(Intent.createChooser(send,"Κοινοποίηση Scan RAW"))
+            }.show()
+    }
+
+    private fun showSettings() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(19), dp(10), dp(19), dp(12))
+        }
+        val titleRange = title("Μέγιστη κλίμακα RADAR (NM) • αρχική 20 NM", 12f)
+        layout.addView(titleRange)
+        val range = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setSingleLine()
+            setText(maxRangeNm.toInt().toString())
+            hint = "250"
+        }
+        layout.addView(range, LinearLayout.LayoutParams(-1, dp(49)))
+        val currentSize = aircraftLabelSp.toInt()
+        val sizeText = title("Μέγεθος γραμμάτων στόχων: ${currentSize} sp", 12f)
+        layout.addView(sizeText)
+        val sizes = SeekBar(this).apply {
+            max = 20
+            if (Build.VERSION.SDK_INT >= 26) min = 7
+            progress = currentSize
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, size: Int, fromUser: Boolean) {
+                    sizeText.text = "Μέγεθος γραμμάτων στόχων: ${size.coerceIn(7,20)} sp"
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+        }
+        layout.addView(sizes)
+        val pauseError = CheckBox(this).apply {
+            text = "Pause Replay σε NORTH / sector missing"
+            textSize = 12f
+            isChecked = pauseOnErrors
+        }
+        layout.addView(pauseError)
+        layout.addView(title("Ανοιχτό γκρι RADAR • κόκκινοι δακτύλιοι • αρχική κλίμακα 20 NM",11f))
+        AlertDialog.Builder(this)
+            .setTitle("Ρυθμίσεις AIRCAT500")
+            .setView(layout)
+            .setPositiveButton("Εφαρμογή") { _, _ ->
+                val rangeNm = (range.text.toString().toFloatOrNull() ?: 250f).coerceIn(20f,1000f)
+                maxRangeNm = rangeNm
+                aircraftLabelSp = sizes.progress.toFloat().coerceIn(7f,20f)
+                pauseOnErrors = pauseError.isChecked
+                radar.maxRangeNm = rangeNm
+                radar.labelSizeSp = aircraftLabelSp
+                getSharedPreferences("aircat_v2_settings",MODE_PRIVATE).edit()
+                    .putFloat("max_range_nm",maxRangeNm)
+                    .putFloat("label_size_sp",aircraftLabelSp)
+                    .putBoolean("pause_on_north_errors",pauseOnErrors).apply()
+            }
+            .setNeutralButton("About") { _, _ -> showAbout() }
+            .setNegativeButton("Άκυρο",null)
+            .show()
+    }
+
+    private fun showAbout() {
+        val version = packageManager.getPackageInfo(packageName,0).versionName
+        AlertDialog.Builder(this).setTitle("About AIRCAT500 Mobile")
+            .setMessage("AIRCAT500 Mobile v$version\n" +
+                "Android offline radar analysis & replay\n" +
+                "Decoder: AIRCAT500 BSC / CSV / BIN / PCAP / PCAPNG\n" +
+                "Radar: 20 NM initial, configurable max 250 NM\n" +
+                "Desktop reference: Python Analyzer v9.16\n" +
+                "SYNC2USB live Wi-Fi/USB: not included in this build.\n" +
+                "Version v2.0 uses capture-derived statistics; unavailable Python statistics are not invented.")
+            .setPositiveButton("OK",null).show()
+    }
+
+    private fun showReport() {
+        val report = lastFullReport ?: run {
+            info.text = "Άνοιξε πρώτα αρχείο καταγραφής για πλήρη ανάλυση."
+            return
+        }
+        val text = TextView(this).apply {
+            setText(report)
+            textSize=11f
+            setTextColor(fg)
+            setTextIsSelectable(true)
+            setPadding(dp(14),dp(14),dp(14),dp(14))
+        }
+        val scroll = ScrollView(this).apply {
+            setBackgroundColor(Color.rgb(249,252,254))
+            addView(text)
+        }
+        AlertDialog.Builder(this).setTitle("AIRCAT500 v2 — Αναλυτικό Report")
+            .setView(scroll)
+            .setPositiveButton("Κλείσιμο",null)
+            .setNeutralButton("Αποθήκευση") { _,_ -> exportReport() }
+            .setNegativeButton("Share / Viber") { _,_ -> shareReport() }
+            .show()
+    }
+
+    private fun shareReport() {
+        val report = lastFullReport ?: return
+        // Android's sharesheet includes Viber when installed and registered.
+        // Do not hard-code a package: it would fail on devices without Viber.
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT,report)
+            putExtra(Intent.EXTRA_SUBJECT,"AIRCAT500 Mobile v2 report")
+        }
+        startActivity(Intent.createChooser(send,"Κοινοποίηση μέσω Viber ή άλλης εφαρμογής"))
+    }
+
     private fun exportReport() {
         val data = capture ?: run { info.text = "Άνοιξε πρώτα μια καταγραφή."; return }
-        val stats = diagnostics ?: return
-        pendingReport = AircatReport.create(data,stats) + "\n\n" + AircatReport.errors(stats) + "\n\n" + AircatReport.alerts(stats)
+        pendingReport = lastFullReport ?: diagnostics?.let { AircatDesktopSummary.report(data,it) }
+            ?: return
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "text/plain"
-            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_Mobile_v1_report.txt")
+            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_v2_Analytical_Report.txt")
         }
         startActivityForResult(intent, 78)
     }
