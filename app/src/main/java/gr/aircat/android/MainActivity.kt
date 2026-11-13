@@ -54,7 +54,8 @@ class MainActivity : Activity() {
     private var lastAlertSummary: String? = null
     private var maxRangeNm = 250f
     private var aircraftLabelSp = 9f
-    private var uiTextSp = 13f
+    private var uiTextSp = 16f
+    private var maxRingNm = 220
     private val scalableText = ArrayList<java.lang.ref.WeakReference<TextView>>()
     private var pauseOnErrors = false
     private var errorNorthTimes: Set<Double> = emptySet()
@@ -111,6 +112,7 @@ class MainActivity : Activity() {
     }
     private fun scrollText(output: TextView): ScrollView = ScrollView(this).apply {
         isFillViewport = true
+        output.maxLines = Int.MAX_VALUE
         setBackgroundColor(Color.rgb(248, 249, 250))
         addView(output)
     }
@@ -122,7 +124,8 @@ class MainActivity : Activity() {
         val prefs = getSharedPreferences("aircat_v2_settings", MODE_PRIVATE)
         maxRangeNm = prefs.getFloat("max_range_nm", 250f)
         aircraftLabelSp = prefs.getFloat("label_size_sp", 9f).coerceIn(7f, 16f)
-        uiTextSp = prefs.getFloat("all_text_size_sp", 13f).coerceIn(13f,16f)
+        uiTextSp = prefs.getFloat("all_text_size_sp", 16f).coerceIn(13f,20f)
+        maxRingNm = prefs.getInt("max_ring_nm",220).coerceIn(5,500)
         pauseOnErrors = prefs.getBoolean("pause_on_north_errors", false)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -142,7 +145,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v2.1", 13f))
+        root.addView(title("AIRCAT500 Mobile  v2.2", 16f))
         val open = button("Άνοιγμα", 11f) { chooseFile() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 10f) { showReport() }
@@ -175,13 +178,25 @@ class MainActivity : Activity() {
             state = replay
             this.filter = currentFilter
             maxRangeNm = this@MainActivity.maxRangeNm
+            maxRingNm = this@MainActivity.maxRingNm
             labelSizeSp = aircraftLabelSp
             uiFontSp = uiTextSp
             onTrackTap = { track -> showTrack(track) }
         }
-        monitor = title("Δεν έχει φορτωθεί αρχείο.")
-        errors = title("Δεν υπάρχουν στοιχεία σφαλμάτων.")
-        alerts = title("Δεν υπάρχουν στοιχεία alerts.")
+        // These panels are long reports: title() normally caps short captions
+        // at three lines, silently hiding almost all Errors/Alerts content.
+        monitor = title("Δεν έχει φορτωθεί αρχείο.").apply {
+            maxLines = Int.MAX_VALUE
+            setTextIsSelectable(true)
+        }
+        errors = title("Δεν υπάρχουν στοιχεία σφαλμάτων.").apply {
+            maxLines = Int.MAX_VALUE
+            setTextIsSelectable(true)
+        }
+        alerts = title("Δεν υπάρχουν στοιχεία alerts.").apply {
+            maxLines = Int.MAX_VALUE
+            setTextIsSelectable(true)
+        }
         chart = ChartView(this).apply { uiFontSp = uiTextSp }
         val views: Array<View> = arrayOf(radar, scrollText(monitor), scrollText(errors), scrollText(alerts), chart)
         showViews = views
@@ -752,15 +767,15 @@ class MainActivity : Activity() {
             })
         }
         layout.addView(sizes)
-        val allSizeText = title("Μέγεθος μενού / report / συνόψεων: ${uiTextSp.toInt()} sp", 13f)
+        val allSizeText = title("Μέγεθος μενού / report / συνόψεων: ${uiTextSp.toInt()} sp", 16f)
         layout.addView(allSizeText)
         val allSizes = SeekBar(this).apply {
-            max = 16
+            max = 20
             if (Build.VERSION.SDK_INT >= 26) min = 13
-            progress = uiTextSp.toInt().coerceIn(13,16)
+            progress = uiTextSp.toInt().coerceIn(13,20)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(bar: SeekBar?, size: Int, fromUser: Boolean) {
-                    allSizeText.text = "Μέγεθος μενού / report / συνόψεων: ${size.coerceIn(13,16)} sp"
+                    allSizeText.text = "Μέγεθος μενού / report / συνόψεων: ${size.coerceIn(13,20)} sp"
                 }
                 override fun onStartTrackingTouch(bar: SeekBar?) {}
                 override fun onStopTrackingTouch(bar: SeekBar?) {}
@@ -781,7 +796,7 @@ class MainActivity : Activity() {
                 val rangeNm = (range.text.toString().toFloatOrNull() ?: 250f).coerceIn(20f,1000f)
                 maxRangeNm = rangeNm
                 aircraftLabelSp = sizes.progress.toFloat().coerceIn(7f,16f)
-                uiTextSp = allSizes.progress.toFloat().coerceIn(13f,16f)
+                uiTextSp = allSizes.progress.toFloat().coerceIn(13f,20f)
                 pauseOnErrors = pauseError.isChecked
                 radar.maxRangeNm = rangeNm
                 radar.labelSizeSp = aircraftLabelSp
