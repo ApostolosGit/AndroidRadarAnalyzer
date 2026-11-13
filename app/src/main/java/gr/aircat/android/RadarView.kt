@@ -194,16 +194,36 @@ class RadarView(context: Context) : View(context) {
                 paint.color = if (track.alert) Color.rgb(192, 47, 47) else Color.DKGRAY
                 canvas.drawCircle(x, y, dp(9f), paint)
             }
+            if (filter.showVelocityVector && track.dx != null && track.dy != null) {
+                // Relative vector cue from decoded dx/dy components. The vector
+                // is not interpreted as calibrated airspeed or ground track.
+                val vx = (track.dx.coerceIn(-32,32)) * dp(.7f)
+                val vy = -(track.dy.coerceIn(-32,32)) * dp(.7f)
+                if (vx*vx + vy*vy > dp(2f)*dp(2f)) {
+                    paint.style = Paint.Style.STROKE
+                    paint.color = Color.rgb(18, 85, 128)
+                    paint.strokeWidth = dp(1.2f)
+                    canvas.drawLine(x,y,x+vx,y+vy,paint)
+                }
+            }
             hitPoints.add(track to (x to y))
             if (filter.showLabels) {
                 // A/C labels are enabled by default on EVERY visible aircraft.
-                val a = track.modeA ?: "----"
-                val c = track.modeC ?: "----"
-                val text = buildString {
-                    append("#${track.number} A:$a C:$c")
-                    if (filter.showRangeLabel) append(" %.1fNM".format(track.rangeNm32))
-                    if (track.alert) append(" !")
-                }
+                val segments = ArrayList<String>()
+                if (filter.showTrackNumberLabel) segments.add("#${track.number}")
+                if (filter.showModeALabel) segments.add("A:${track.modeA ?: "----"}")
+                if (filter.showModeCLabel) segments.add("C:${track.modeC ?: "----"}")
+                if (filter.showSpeedLabel) segments.add("${track.speedKt?.let { "${it}kt" } ?: "--kt"}")
+                if (filter.showQualityLabel) segments.add("Q:${track.quality ?: "--"}")
+                if (filter.showMissesLabel) segments.add("Miss:${track.detectionMisses ?: "--"}")
+                if (filter.showTprLabel) segments.add("TPR:${track.tpr ?: "--"}")
+                if (filter.showLogSigmaLabel) segments.add("Σ:${track.logSigmaVolts ?: "--"}")
+                if (filter.showNorthTimeLabel) segments.add("TN:${track.timeSinceNorthSec ?: "--"}")
+                if (filter.showTrackingWindowLabel) segments.add("Win:${track.trackingWindow ?: "--"}")
+                if (filter.showSmoothingLabel) segments.add("K:${track.smoothingK ?: "--"}")
+                if (filter.showRangeLabel) segments.add("%.1fNM".format(track.rangeNm32))
+                if (track.alert) segments.add("!")
+                val text = segments.joinToString(" ")
                 paint.style = Paint.Style.FILL
                 paint.color = Color.BLACK
                 paint.textSize = sp(labelSizeSp)
