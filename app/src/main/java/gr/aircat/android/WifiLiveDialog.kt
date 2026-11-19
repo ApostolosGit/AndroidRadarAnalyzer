@@ -36,7 +36,8 @@ class WifiLiveDialog(
     private val owner: Activity,private val settings: ()->WifiLiveSettings,
     private val openFilters: ()->Unit,private val openSettings: ()->Unit,
     private val inspectTrack: (RadarTrack)->Unit,
-    private val requestCsv: ()->Unit,private val saveText: (String)->Unit
+    private val requestCsv: ()->Unit,private val saveText: (String)->Unit,
+    private val recordCsv: (Uri,AircatWifiSession)->Unit
 ) : Dialog(owner) {
     private val ui=Handler(Looper.getMainLooper())
     private val analysisWorker=Executors.newSingleThreadExecutor()
@@ -101,7 +102,7 @@ class WifiLiveDialog(
             orientation=LinearLayout.VERTICAL;setPadding(dp(5),dp(5),dp(5),dp(5))
             setBackgroundColor(Color.rgb(224,243,253))
         }
-        root.addView(label("AIRCAT500 Mobile v2.3 — Live Wi-Fi"))
+        root.addView(label("AIRCAT500 Mobile v2.3.1 — Live Wi-Fi"))
         status=label(networkMessage).apply{maxLines=5}
         root.addView(status)
         root.addView(row(button("Σύνδεση"){credentials(false)},
@@ -200,7 +201,7 @@ class WifiLiveDialog(
     fun startRecording(uri: Uri) {
         try {
             val s=session ?: error("Η λήψη έχει σταματήσει")
-            s.record{owner.contentResolver.openOutputStream(uri) ?: error("Δεν ανοίγει το αρχείο CSV")}
+            recordCsv(uri,s)
         } catch(ex: Exception){showText("CSV Record",ex.message ?: "Σφάλμα εγγραφής")}
     }
 
@@ -306,7 +307,7 @@ class WifiLiveDialog(
     }
     private fun showLiveReport(result: WifiWindowAnalysis) {
         val s=session?.snapshot
-        val text="AIRCAT500 Mobile v2.3 — WiFi\n${s?.transport?.firmwareLabel ?: "Firmware: μη διαθέσιμη"}\n"+
+        val text="AIRCAT500 Mobile v2.3.1 — WiFi\n${s?.transport?.firmwareLabel ?: "Firmware: μη διαθέσιμη"}\n"+
             "Ανάλυση των τελευταίων ${result.capture.packets.size} CRC-valid frames, έως ${result.capture.packets.last().epochSeconds}s.\n"+
             "Το πλήρες ιστορικό αποθηκεύεται μόνο όταν ενεργοποιήσεις CSV Record.\n\n"+
             (s?.let{errorText(it)+"\n\n"} ?: "")+result.report.substringAfter('\n')

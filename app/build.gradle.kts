@@ -11,11 +11,11 @@ android {
         val parallelWifi = providers.gradleProperty("wifiParallel").orNull == "true"
         applicationId = if (parallelWifi) "gr.aircat.androidradaranalyzer.wifi23"
                         else "gr.aircat.androidradaranalyzer"
-        manifestPlaceholders["appLabel"] = if (parallelWifi) "AIRCAT500 WiFi 2.3" else "AIRCAT500 Mobile"
+        manifestPlaceholders["appLabel"] = if (parallelWifi) "AIRCAT500 WiFi 2.3.1" else "AIRCAT500 Mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "2.3"
+        versionCode = 10
+        versionName = "2.3.1"
     }
 
     compileOptions {

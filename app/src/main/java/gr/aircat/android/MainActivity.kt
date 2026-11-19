@@ -52,6 +52,8 @@ class MainActivity : Activity() {
     private var currentFilter = RadarFilter()
     private var pendingReport: String? = null
     private var wifiDialog: WifiLiveDialog? = null
+    private val wifiRecordingHistory by lazy { WifiRecordingHistory(this) }
+    private var wifiRecording: WifiCsvRecorder? = null
     private var pendingWifiReport: String? = null
     private var destroying = false
     private var lastFullReport: String? = null
@@ -150,7 +152,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v2.3", 16f))
+        root.addView(title("AIRCAT500 Mobile  v2.3.1", 16f))
         val open = button("Άνοιγμα", 11f) { chooseFile() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 10f) { showReport() }
@@ -294,7 +296,8 @@ class MainActivity : Activity() {
         if (index == 1 || index == 2 || index == 3) refreshAnalysisPages()
     }
 
-    private fun chooseFile() {
+    private fun chooseFile(suggestWifi: Boolean = true) {
+        if (suggestWifi && offerLastWifiRecording()) return
         // CSV MIME types differ between Android devices and file providers.
         // A provider-side EXTRA_MIME_TYPES whitelist can disable valid CSVs.
         // Open all documents and dispatch by the selected file extension
@@ -303,6 +306,7 @@ class MainActivity : Activity() {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            wifiRecordingHistory.latest()?.let { putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,it) }
         }
         startActivityForResult(intent, 77)
     }
@@ -313,6 +317,8 @@ class MainActivity : Activity() {
         if (resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         if (requestCode == 79) {
+            val grants = data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            try { contentResolver.takePersistableUriPermission(uri,grants) } catch (_: SecurityException) { }
             wifiDialog?.startRecording(uri)
             return
         }
@@ -344,6 +350,11 @@ class MainActivity : Activity() {
             return
         }
         if (requestCode != 77) return
+        loadReplayFile(uri)
+    }
+
+    private fun loadReplayFile(uri: Uri,autoPlay: Boolean = true,showAnalysis: Boolean = true) {
+        if (wifiDialog?.isShowing == true) return
         pause()
         setLoadProgress(0,"Έναρξη φόρτωσης...")
         worker.execute {
@@ -450,8 +461,8 @@ class MainActivity : Activity() {
                     refreshAnalysisPages()
                     showTab(0)
                     jumpTo(0)
-                    start() // Keep v0.2's successful autoplay.
-                    showReport() // Python-style full analysis is available immediately.
+                    if (autoPlay) start()
+                    if (showAnalysis) showReport()
                     ui.postDelayed({ hideLoadProgress() }, 1400)
                     android.widget.Toast.makeText(this, "$sourceNote • ${loaded.summary.packets} frames", android.widget.Toast.LENGTH_LONG).show()
                 }
@@ -881,7 +892,7 @@ class MainActivity : Activity() {
                 "Radar: 20 NM initial, 5 NM rings up to ${maxRingNm} NM\n" +
                 "Desktop reference: Python Analyzer v9.16\n" +
                 "Live Wi-Fi: SYNC2WIFI. Direct USB: not included.\n" +
-                "Version v2.3: Wi-Fi connection, live radar, firmware version and CSV recording.")
+                "Version v2.3.1: Wi-Fi connection, live radar, firmware version and CSV recording.")
             .setPositiveButton("OK",null).show()
     }
 
@@ -901,7 +912,7 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(249,252,254))
             addView(text)
         }
-        AlertDialog.Builder(this).setTitle("AIRCAT500 v2.3 — Αναλυτικό Report")
+        AlertDialog.Builder(this).setTitle("AIRCAT500 v2.3.1 — Αναλυτικό Report")
             .setView(scroll)
             .setPositiveButton("Κλείσιμο",null)
             .setNeutralButton("Αποθήκευση") { _,_ -> exportReport() }
@@ -928,7 +939,7 @@ class MainActivity : Activity() {
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "text/plain"
-            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_V2.3_Report.txt")
+            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_V2.3.1_Report.txt")
         }
         startActivityForResult(intent, 78)
     }
@@ -939,7 +950,6 @@ class MainActivity : Activity() {
             android.widget.Toast.makeText(this,"Περίμενε να ολοκληρωθεί η φόρτωση αρχείου.",android.widget.Toast.LENGTH_SHORT).show()
             return
         }
-        val resumeReplay = playing
         pause()
         val dialog = WifiLiveDialog(this,
             settings = { WifiLiveSettings(currentFilter,maxRangeNm,maxRingNm,aircraftLabelSp,uiTextSp,replay.trailDepth) },
@@ -948,21 +958,68 @@ class MainActivity : Activity() {
             requestCsv = {
                 startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE);type="text/csv"
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
                     putExtra(Intent.EXTRA_TITLE,"AIRCAT500_SYNC2WIFI_${System.currentTimeMillis()}.csv")
                 },79)
             }, saveText = { text ->
                 pendingWifiReport = text
                 startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE);type="text/plain"
-                    putExtra(Intent.EXTRA_TITLE,"AIRCAT500_WiFi_v2.3_Report.txt")
+                    putExtra(Intent.EXTRA_TITLE,"AIRCAT500_WiFi_v2.3.1_Report.txt")
                 },80)
-            })
+            }, recordCsv = { uri,session -> startWifiRecording(uri,session) })
         wifiDialog = dialog
         dialog.setOnDismissListener {
             wifiDialog = null
-            if (resumeReplay && !destroying) start()
         }
         dialog.show()
+    }
+
+    private fun startWifiRecording(uri: Uri,session: AircatWifiSession) {
+        check(wifiRecording?.finished != false) { "Περίμενε να ολοκληρωθεί η προηγούμενη εγγραφή CSV." }
+        val history = wifiRecordingHistory
+        val resolver = contentResolver
+        wifiRecording = session.record(onFinished = { rows,error ->
+            history.completed(uri,rows,error)
+            ui.post {
+                if (!destroying && !isFinishing && !isDestroyed) {
+                    if (rows>0 && error==null) offerCompletedWifiRecording(uri)
+                    else android.widget.Toast.makeText(this,error ?: "Η καταγραφή δεν περιέχει δεδομένα.",android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }) {
+            resolver.openOutputStream(uri) ?: error("Δεν ανοίγει το αρχείο CSV")
+        }
+    }
+
+    private fun offerCompletedWifiRecording(uri: Uri) {
+        AlertDialog.Builder(this).setTitle("Η καταγραφή αποθηκεύτηκε")
+            .setMessage("Θέλεις Replay ή Ανάλυση της καταγραφής; Αν επιλέξεις ένα από τα δύο, η ζωντανή λήψη WiFi θα σταματήσει.")
+            .setPositiveButton("Replay") { _,_ -> openWifiRecording(uri,true) }
+            .setNeutralButton("Ανάλυση") { _,_ -> openWifiRecording(uri,false) }
+            .setNegativeButton("Αργότερα",null).show()
+    }
+
+    private fun openWifiRecording(uri: Uri,autoPlay: Boolean) {
+        wifiDialog?.dismiss()
+        loadReplayFile(uri,autoPlay = autoPlay,showAnalysis = !autoPlay)
+    }
+
+    private fun offerLastWifiRecording(): Boolean {
+        if (wifiRecording?.finished == false) {
+            AlertDialog.Builder(this).setTitle("Καταγραφή WiFi")
+                .setMessage("Η τελευταία καταγραφή γράφεται ακόμη. Σταμάτησε την εγγραφή και περίμενε να ολοκληρωθεί η αποθήκευση πριν τη φορτώσεις.")
+                .setPositiveButton("Άλλο αρχείο") { _,_ -> chooseFile(false) }
+                .setNegativeButton("Άκυρο",null).show()
+            return true
+        }
+        val uri = wifiRecordingHistory.latest() ?: return false
+        AlertDialog.Builder(this).setTitle("Άνοιγμα για Replay")
+            .setMessage("Να φορτωθεί η τελευταία ολοκληρωμένη καταγραφή WiFi; Το replay ξεκινά μόνο αν επιλέξεις αρχείο.")
+            .setPositiveButton("Τελευταία καταγραφή") { _,_ -> loadReplayFile(uri) }
+            .setNeutralButton("Άλλο αρχείο") { _,_ -> chooseFile(false) }
+            .setNegativeButton("Άκυρο",null).show()
+        return true
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {

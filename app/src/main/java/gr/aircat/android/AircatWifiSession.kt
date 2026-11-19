@@ -37,7 +37,10 @@ class WifiFrameBuffer(private val historyLimit: Int=4096, private val displayLim
 data class WifiRecordRow(val packet: RadarPacket,val wifi: WifiCounters)
 
 /** Same accepted-frame CSV contract as Python. Never writes from the UI thread. */
-class WifiCsvRecorder(private val open: ()->OutputStream) {
+class WifiCsvRecorder(
+    private val onFinished: (Long,String?)->Unit = {_,_->},
+    private val open: ()->OutputStream
+) {
     private val queue=LinkedBlockingQueue<WifiRecordRow>(2048)
     private val lock=Any()
     @Volatile private var accepting=true
@@ -72,7 +75,10 @@ class WifiCsvRecorder(private val open: ()->OutputStream) {
                 writer.flush()
             }
         } catch(ex: Exception){error="Αποτυχία εγγραφής CSV: ${ex.message}"}
-        finally { accepting=false;finished=true }
+        finally {
+            accepting=false
+            try { onFinished(rows,error) } finally { finished=true }
+        }
     }
 }
 
@@ -98,10 +104,10 @@ class AircatWifiSession(
         require(Regex("[0-9]{4}").matches(pin)){"Το PIN πρέπει να έχει 4 ψηφία"}
         thread(name="AIRCAT WiFi receiver",isDaemon=true){receiveLoop()}
     }
-    @Synchronized fun record(open: ()->OutputStream) {
+    @Synchronized fun record(onFinished: (Long,String?)->Unit = {_,_->},open: ()->OutputStream): WifiCsvRecorder {
         check(!stopped && started){"Δεν υπάρχει ενεργή λήψη"}
         check(recorder?.finished!=false){"Η προηγούμενη εγγραφή δεν έχει ολοκληρωθεί"}
-        recorder=WifiCsvRecorder(open)
+        return WifiCsvRecorder(onFinished,open).also{recorder=it}
     }
     fun stopRecording(){recorder?.stop()}
     private fun monotonicMs()=System.nanoTime()/1_000_000L

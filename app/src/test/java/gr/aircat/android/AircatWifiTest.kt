@@ -184,6 +184,29 @@ class AircatWifiTest {
         } finally{gate.countDown();writer.stop()}
         waitUntil{writer.finished}
     }
+    @Test fun recordingCompletionRunsAfterCloseAndReportsFailure() {
+        var closed=false
+        val output=object : ByteArrayOutputStream() {
+            override fun close(){super.close();closed=true}
+        }
+        val done=CountDownLatch(1)
+        var completedRows=-1L
+        var completedError: String?="not called"
+        var completedAfterClose=false
+        val writer=WifiCsvRecorder(onFinished={rows,error ->
+            completedRows=rows;completedError=error;completedAfterClose=closed;done.countDown()
+        }){output}
+        repeat(5){writer.offer(WifiRecordRow(record(it.toLong()),WifiCounters()))}
+        assertEquals(1L,done.count)
+        writer.stop();assertTrue(done.await(3,TimeUnit.SECONDS))
+        assertTrue(completedAfterClose);assertEquals(5L,completedRows);assertNull(completedError)
+        assertEquals(5,AircatCsv.read(StringReader(output.toString("UTF-8")),"closed.csv").packets.size)
+        val failed=CountDownLatch(1)
+        var failure: String?=null
+        val bad=WifiCsvRecorder(onFinished={_,error ->failure=error;failed.countDown()}){throw IOException("disk unavailable")}
+        assertTrue(failed.await(3,TimeUnit.SECONDS));waitUntil{bad.finished}
+        assertNotNull(failure)
+    }
     @Test fun loopbackFirmwareHandshakeDuplicatesAndStreaming() {
         val loop=InetAddress.getByName("127.0.0.1")
         val server=DatagramSocket(0,loop).apply{soTimeout=3000}

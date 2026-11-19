@@ -11,7 +11,14 @@ for name,expected in baseline['files'].items():
     actual=hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
     assert actual==expected,f'Unrelated v2.2 source/test changed: {name}'
 text=(root/'app/src/main/java/gr/aircat/android/MainActivity.kt').read_text()
-normalized=text.replace('v2.3','v2.2').replace('V2.3','V2.2')
+normalized=text.replace('v2.3.1','v2.2').replace('V2.3.1','V2.2')
+normalized=normalized.replace('private fun chooseFile(suggestWifi: Boolean = true)', 'private fun chooseFile()')
+normalized=normalized.replace('        if (suggestWifi && offerLastWifiRecording()) return\n','')
+normalized=normalized.replace('            wifiRecordingHistory.latest()?.let { putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,it) }\n','')
+# Rejoin the unchanged import/analysis body after extracting it for explicit replay/analysis choices.
+normalized=normalized.replace('        loadReplayFile(uri)\n    }\n\n    private fun loadReplayFile(uri: Uri,autoPlay: Boolean = true,showAnalysis: Boolean = true) {\n        if (wifiDialog?.isShowing == true) return\n','')
+normalized=normalized.replace('                    if (autoPlay) start()\n                    if (showAnalysis) showReport()',
+    "                    start() // Keep v0.2's successful autoplay.\n                    showReport() // Python-style full analysis is available immediately.")
 normalized=re.sub(r'^.*wifiDialog\?\.applySettings\(\)\n','',normalized,flags=re.M)
 normalized=normalized.replace('        root.addView(row(button("Wi-Fi / SYNC2WIFI") { showWifiWindow() }, height = 36))\n','')
 normalized=normalized.replace('        destroying = true\n        wifiDialog?.dismiss()\n','')

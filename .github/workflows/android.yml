@@ -57,35 +57,35 @@ jobs:
             git push origin HEAD:feature/mobile-v1-desktop-port
           fi
       - name: Publish requested APK filename
-        run: cp app/build/outputs/apk/debug/app-debug.apk AIRCAT500_V2.3.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk AIRCAT500_V2.3.1.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: AIRCAT500_V2.3
-          path: AIRCAT500_V2.3.apk
+          name: AIRCAT500_V2.3.1
+          path: AIRCAT500_V2.3.1.apk
       - name: Build parallel APK preserving the installed v2.2 app
         run: |
           gradle :app:assembleDebug -PwifiParallel=true --no-daemon
-          cp app/build/outputs/apk/debug/app-debug.apk AIRCAT500_V2.3_parallel.apk
+          cp app/build/outputs/apk/debug/app-debug.apk AIRCAT500_V2.3.1_parallel.apk
       - name: Verify APK versions, installation identities and signatures
         run: python tools/verify_apks.py
       - uses: actions/upload-artifact@v4
         with:
-          name: AIRCAT500_V2.3-parallel
-          path: AIRCAT500_V2.3_parallel.apk
+          name: AIRCAT500_V2.3.1-parallel
+          path: AIRCAT500_V2.3.1_parallel.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: AIRCAT500_V2.3-checksums
-          path: AIRCAT500_V2.3_SHA256SUMS.txt
+          name: AIRCAT500_V2.3.1-checksums
+          path: AIRCAT500_V2.3.1_SHA256SUMS.txt
       - name: Package Android Studio v2 source
-        run: zip -qr AIRCAT500_V2.3_AndroidStudio.zip app/src app/build.gradle.kts README.md README_WIFI_V2_3_GR.md build.gradle.kts settings.gradle.kts gradle.properties gradle tools .gitignore
+        run: zip -qr AIRCAT500_V2.3.1_AndroidStudio.zip app/src app/build.gradle.kts README.md README_WIFI_V2_3_GR.md build.gradle.kts settings.gradle.kts gradle.properties gradle tools .gitignore
       - uses: actions/upload-artifact@v4
         with:
-          name: AIRCAT500_V2.3_AndroidStudio-source
-          path: AIRCAT500_V2.3_AndroidStudio.zip
+          name: AIRCAT500_V2.3.1_AndroidStudio-source
+          path: AIRCAT500_V2.3.1_AndroidStudio.zip
 
       - name: Upload validation results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: AIRCAT500_V2.3-test-results
+          name: AIRCAT500_V2.3.1-test-results
           path: app/build/reports/tests/testDebugUnitTest
