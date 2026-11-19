@@ -149,8 +149,10 @@ class WifiUiPreservationTest {
             assertSame(previous,field(activity,"capture").get(activity))
             assertFalse(field(activity,"playing").getBoolean(activity))
             ShadowAlertDialog.getLatestAlertDialog().getButton(AlertDialog.BUTTON_NEGATIVE).performClick()
+            shadowOf(Looper.getMainLooper()).idle()
             chooseFile(activity)
             ShadowAlertDialog.getLatestAlertDialog().getButton(AlertDialog.BUTTON_NEUTRAL).performClick()
+            shadowOf(Looper.getMainLooper()).idle()
             val intent=shadowOf(activity).nextStartedActivityForResult.intent
             assertEquals(Intent.ACTION_OPEN_DOCUMENT,intent.action)
             assertEquals(uri,intent.getParcelableExtra<Uri>(DocumentsContract.EXTRA_INITIAL_URI))

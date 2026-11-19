@@ -318,7 +318,9 @@ class MainActivity : Activity() {
         val uri = data?.data ?: return
         if (requestCode == 79) {
             val grants = data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            try { contentResolver.takePersistableUriPermission(uri,grants) } catch (_: SecurityException) { }
+            if (grants != 0) {
+                try { contentResolver.takePersistableUriPermission(uri,grants) } catch (_: SecurityException) { }
+            }
             wifiDialog?.startRecording(uri)
             return
         }
