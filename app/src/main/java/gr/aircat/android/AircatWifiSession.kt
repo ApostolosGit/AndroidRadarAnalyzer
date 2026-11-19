@@ -172,12 +172,11 @@ class AircatWifiSession(
         } catch(ex: Exception) {
             if(!stopped)snapshot=WifiSessionSnapshot(protocol.snapshot(),parser.snapshot(),"Σφάλμα Wi-Fi: ${ex.message}",false)
         } finally {
-            stopped=true
-            dataSocket?.close();helloSocket?.close();recorder?.stop()
+            close()
             if(snapshot.running)snapshot=snapshot.copy(message="Η λήψη σταμάτησε",running=false)
         }
     }
-    override fun close() {
+    @Synchronized override fun close() {
         stopped=true;dataSocket?.close();helloSocket?.close();recorder?.stop()
     }
 }

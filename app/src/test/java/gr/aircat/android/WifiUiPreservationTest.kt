@@ -18,7 +18,7 @@ class WifiUiPreservationTest {
     private fun field(activity: MainActivity,name: String)=MainActivity::class.java.getDeclaredField(name).apply{isAccessible=true}
     private fun call(activity: MainActivity,name: String)=MainActivity::class.java.getDeclaredMethod(name).apply{isAccessible=true}.invoke(activity)
     private fun prepare(activity: MainActivity): RadarCapture {
-        val capture=AircatCsv.read(StringReader("frame_no,time_epoch,udp_payload_hex\n1,1000,1940FD000000\n2,1004,0C40FD00\n"),"saved.csv")
+        val capture=AircatCsv.read(StringReader("frame_no,time_epoch,udp_payload_hex\n1,1000,1940FD000000\n2,1004,0C40FD00\n3,1008,0C40FD01\n4,1012,0C40FD02\n"),"saved.csv")
         field(activity,"capture").set(activity,capture)
         field(activity,"diagnostics").set(activity,AircatAnalysis.analyze(capture))
         MainActivity::class.java.getDeclaredMethod("jumpTo",Int::class.javaPrimitiveType,Boolean::class.javaPrimitiveType)
@@ -54,6 +54,7 @@ class WifiUiPreservationTest {
             call(activity,"showWifiWindow")
             assertFalse(field(activity,"playing").getBoolean(activity))
             (field(activity,"wifiDialog").get(activity) as WifiLiveDialog).dismiss()
+            shadowOf(Looper.getMainLooper()).idle() // Android dispatches onDismiss asynchronously.
             assertTrue(field(activity,"playing").getBoolean(activity))
         } finally{controller.pause().stop().destroy()}
     }

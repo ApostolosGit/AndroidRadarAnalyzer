@@ -82,11 +82,21 @@ class WifiNetworkConnection(
 
     /** Manual association needs no SSID/location query. The HELLO proves the endpoint. */
     fun useCurrent() {
-        release();val token=generation
         fun matches(properties: LinkProperties?) = properties?.linkAddresses?.any {
             val bytes=it.address.address
             bytes.size==4 && bytes[0].toInt() and 255==192 && bytes[1].toInt() and 255==168 && bytes[2].toInt() and 255==4
         }==true
+        // Keep a connection already owned by this app alive while reusing it.
+        // Unregistering its request first could make Android disconnect the AP.
+        current?.let { network ->
+            if(matches(cm.getLinkProperties(network))) {
+                pendingPassword=null
+                state("Χρήση υπάρχουσας σύνδεσης Wi-Fi · επαλήθευση ESP32...")
+                ready(network)
+                return
+            }
+        }
+        release();val token=generation
         fun select(network: Network,properties: LinkProperties?) {
             if(token!=generation || current==network || !matches(properties))return
             current=network;state("Τρέχον Wi-Fi 192.168.4.x · επαλήθευση ESP32...");ready(network)

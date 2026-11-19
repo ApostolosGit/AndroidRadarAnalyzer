@@ -141,6 +141,17 @@ class AircatWifiTest {
         assertEquals(1,p.feed(frame(north),4.0).size)
         assertEquals(0L,p.snapshot().completed)
     }
+    @Test fun udpGapCannotJoinHalvesOfAnOldBscFrame() {
+        val protocol=AircatWifiProtocol();val parser=AircatBscStream()
+        val f=frame(sector(3))
+        val first=protocol.decode(packet(f.copyOfRange(0,9),0),nowMs=0)!!
+        assertTrue(parser.feed(first.bytes,0.0).isEmpty())
+        val next=protocol.decode(packet(f.copyOfRange(9,f.size)+frame(north),2),nowMs=1)!!
+        assertTrue(next.resetStream);parser.transportGap()
+        val accepted=parser.feed(next.bytes,1.0)
+        assertEquals(1,accepted.size);assertEquals(0x19,accepted.single().kind)
+        assertEquals(1L,protocol.snapshot().lost)
+    }
     @Test fun displayQueueAndRecentWindowAreBounded() {
         val b=WifiFrameBuffer(3,2)
         for(i in 1..10)b.add(record(i.toLong()))
