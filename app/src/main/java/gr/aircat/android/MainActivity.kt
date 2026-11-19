@@ -51,6 +51,9 @@ class MainActivity : Activity() {
     private var chartMode = 0
     private var currentFilter = RadarFilter()
     private var pendingReport: String? = null
+    private var wifiDialog: WifiLiveDialog? = null
+    private var pendingWifiReport: String? = null
+    private var destroying = false
     private var lastFullReport: String? = null
     private var lastErrorSummary: String? = null
     private var lastAlertSummary: String? = null
@@ -147,12 +150,13 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v2.2", 16f))
+        root.addView(title("AIRCAT500 Mobile  v2.3", 16f))
         val open = button("Άνοιγμα", 11f) { chooseFile() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 10f) { showReport() }
         val settings = button("Ρυθμίσεις", 9f) { showSettings() }
         root.addView(row(open, filter, export, settings, height = 41))
+        root.addView(row(button("Wi-Fi / SYNC2WIFI") { showWifiWindow() }, height = 36))
         info = title("Άνοιξε αρχείο CSV, BIN, PCAP ή PCAPNG για Offline Replay.", 12f)
         root.addView(info)
         progressText = title("", 11f).apply { visibility = View.GONE }
@@ -308,6 +312,24 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK) return
         val uri = data?.data ?: return
+        if (requestCode == 79) {
+            wifiDialog?.startRecording(uri)
+            return
+        }
+        if (requestCode == 80) {
+            val text = pendingWifiReport ?: return
+            pendingWifiReport = null
+            worker.execute {
+                try {
+                    contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                        ?: error("Το αρχείο δεν ανοίγει για εγγραφή")
+                    runOnUiThread { android.widget.Toast.makeText(this,"Το Wi-Fi report αποθηκεύτηκε.",android.widget.Toast.LENGTH_SHORT).show() }
+                } catch (ex: Exception) {
+                    runOnUiThread { android.widget.Toast.makeText(this,"Σφάλμα αποθήκευσης: ${ex.message}",android.widget.Toast.LENGTH_LONG).show() }
+                }
+            }
+            return
+        }
         if (requestCode == 78) {
             val text = pendingReport ?: return
             worker.execute {
@@ -461,6 +483,7 @@ class MainActivity : Activity() {
         scalableText.removeAll { it.get() == null }
         if (::radar.isInitialized) radar.uiFontSp = uiTextSp
         if (::chart.isInitialized) chart.uiFontSp = uiTextSp
+        wifiDialog?.applySettings()
         // Android dialogs are populated using uiTextSp when opened.
     }
 
@@ -700,6 +723,7 @@ class MainActivity : Activity() {
                             if (wasPlaying) resetClock()
                         }
                     }
+                    wifiDialog?.applySettings()
                 }
             }
             .setNegativeButton("Άκυρο", null)
@@ -852,12 +876,12 @@ class MainActivity : Activity() {
         val version = packageManager.getPackageInfo(packageName,0).versionName
         AlertDialog.Builder(this).setTitle("About AIRCAT500 Mobile")
             .setMessage("AIRCAT500 Mobile v$version\n" +
-                "Android offline radar analysis & replay\n" +
+                "Android offline radar analysis & replay + Live Wi-Fi\n" +
                 "Decoder: AIRCAT500 BSC / CSV / BIN / PCAP / PCAPNG\n" +
                 "Radar: 20 NM initial, 5 NM rings up to ${maxRingNm} NM\n" +
                 "Desktop reference: Python Analyzer v9.16\n" +
-                "SYNC2USB live Wi-Fi/USB: not included in this build.\n" +
-                "Version v2.2: restored Errors/Alerts, axis labels and zoom buttons.")
+                "Live Wi-Fi: SYNC2WIFI. Direct USB: not included.\n" +
+                "Version v2.3: Wi-Fi connection, live radar, firmware version and CSV recording.")
             .setPositiveButton("OK",null).show()
     }
 
@@ -877,7 +901,7 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(249,252,254))
             addView(text)
         }
-        AlertDialog.Builder(this).setTitle("AIRCAT500 v2.2 — Αναλυτικό Report")
+        AlertDialog.Builder(this).setTitle("AIRCAT500 v2.3 — Αναλυτικό Report")
             .setView(scroll)
             .setPositiveButton("Κλείσιμο",null)
             .setNeutralButton("Αποθήκευση") { _,_ -> exportReport() }
@@ -904,12 +928,52 @@ class MainActivity : Activity() {
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "text/plain"
-            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_V2.2_Report.txt")
+            putExtra(Intent.EXTRA_TITLE, "AIRCAT500_V2.3_Report.txt")
         }
         startActivityForResult(intent, 78)
     }
 
+    private fun showWifiWindow() {
+        if (wifiDialog?.isShowing == true) return
+        if (progress.visibility == View.VISIBLE) {
+            android.widget.Toast.makeText(this,"Περίμενε να ολοκληρωθεί η φόρτωση αρχείου.",android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val resumeReplay = playing
+        pause()
+        val dialog = WifiLiveDialog(this,
+            settings = { WifiLiveSettings(currentFilter,maxRangeNm,maxRingNm,aircraftLabelSp,uiTextSp,replay.trailDepth) },
+            openFilters = { chooseFilters() }, openSettings = { showSettings() },
+            inspectTrack = { showTrack(it) },
+            requestCsv = {
+                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE);type="text/csv"
+                    putExtra(Intent.EXTRA_TITLE,"AIRCAT500_SYNC2WIFI_${System.currentTimeMillis()}.csv")
+                },79)
+            }, saveText = { text ->
+                pendingWifiReport = text
+                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE);type="text/plain"
+                    putExtra(Intent.EXTRA_TITLE,"AIRCAT500_WiFi_v2.3_Report.txt")
+                },80)
+            })
+        wifiDialog = dialog
+        dialog.setOnDismissListener {
+            wifiDialog = null
+            if (resumeReplay && !destroying) start()
+        }
+        dialog.show()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode,permissions,grantResults)
+        if (requestCode == WifiNetworkConnection.PERMISSION_REQUEST)
+            wifiDialog?.permissionResult(grantResults.isNotEmpty() && grantResults.all { it == android.content.pm.PackageManager.PERMISSION_GRANTED })
+    }
+
     override fun onDestroy() {
+        destroying = true
+        wifiDialog?.dismiss()
         ui.removeCallbacks(ticker)
         worker.shutdownNow()
         super.onDestroy()

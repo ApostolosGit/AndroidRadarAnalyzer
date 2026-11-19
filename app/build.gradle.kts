@@ -11,8 +11,8 @@ android {
         applicationId = "gr.aircat.androidradaranalyzer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "2.2"
+        versionCode = 9
+        versionName = "2.3"
     }
 
     compileOptions {
@@ -20,7 +20,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
 
-dependencies { testImplementation("junit:junit:4.13.2") }
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.16.1")
+}

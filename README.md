@@ -1,6 +1,19 @@
-# AIRCAT500 Mobile v2.2 (AndroidRadarAnalyzer)
+# AIRCAT500 Mobile v2.3 (AndroidRadarAnalyzer)
 
 Native Kotlin Android application **based on the verified AIRCAT500 Analyzer v9.16 for Windows** and the tested AIRCAT500 Mobile v0.2 radar playback.
+
+## v2.3 — WiFi-only addition to v2.2
+
+- Adds a separate SYNC2WIFI live window with Android local WiFi connection,
+  network-bound UDP, HELLO/PIN, device-reported firmware version, AC50 v1/v2
+  CRC32/sequence checking, streaming BSC CRC validation and CSV recording.
+- Reuses the existing RadarView, decoder, filters/settings and analysis engine.
+- Keeps the loaded offline file, replay cursor and render state intact.
+- Live diagnostics show session counters; charts/reports use an explicitly
+  bounded recent window of 4096 accepted frames. Recording is independent.
+- Build output: `AIRCAT500_V2.3.apk`. Detailed Greek instructions: [README_WIFI_V2_3_GR.md](README_WIFI_V2_3_GR.md).
+- Includes transport, stream, CSV, loopback and Android UI preservation tests.
+  Actual handset/AP acceptance remains to be tested.
 
 ## v2.2 fixes (over v2.1)
 
@@ -49,7 +62,7 @@ Native Kotlin Android application **based on the verified AIRCAT500 Analyzer v9.
 - Filters: PSR/MSSR, low quality, cancelled, labels/trails, alert-only and invalid Mode values.
 - Save combined plain-text analysis report into Android Downloads via system document picker.
 
-**Not included yet:** Live RICI5000/Ethernet and ESP32-S3 Wi-Fi AP streaming, PC Wireshark integration and direct serial COM/USB modes. These need a separate networking / Android USB implementation and appropriate firmware. A mobile offline port cannot reproduce Windows Tkinter UI pixel-for-pixel.
+**Not included yet:** Live RICI5000/Ethernet, PC Wireshark integration and direct serial COM/USB modes. ESP32-S3 Wi-Fi AP streaming is available in the separate v2.3 WiFi window. A mobile offline port cannot reproduce Windows Tkinter UI pixel-for-pixel.
 
 ## Safety / interpretation
 
