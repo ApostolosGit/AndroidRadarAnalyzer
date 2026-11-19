@@ -26,8 +26,14 @@ class WifiNetworkConnection(
     private val handler=Handler(Looper.getMainLooper())
     private var callback: ConnectivityManager.NetworkCallback?=null
     private var current: Network?=null
+    private var delivered: Network?=null
     private var generation=0
     private var pendingPassword: String?=null
+    private fun hasEspAddress(properties: LinkProperties?) = properties?.linkAddresses?.any {
+        val bytes=it.address.address
+        bytes.size==4 && (bytes[0].toInt() and 255)==192 &&
+            (bytes[1].toInt() and 255)==168 && (bytes[2].toInt() and 255)==4
+    }==true
 
     fun automatic(password: String) {
         if(Build.VERSION.SDK_INT<29) {
@@ -61,11 +67,17 @@ class WifiNetworkConnection(
             override fun onAvailable(network: Network) {
                 if(token!=generation)return
                 if(current==network)return
-                current=network;state("Wi-Fi διαθέσιμο · επαλήθευση ESP32 με HELLO/ACK...");ready(network)
+                current=network;state("Wi-Fi διαθέσιμο · αναμονή DHCP 192.168.4.x...")
+            }
+            override fun onLinkPropertiesChanged(network: Network,properties: LinkProperties) {
+                if(token!=generation || current!=network || delivered==network || !hasEspAddress(properties))return
+                delivered=network
+                state("Wi-Fi και DHCP έτοιμα · επαλήθευση ESP32 με HELLO/ACK...")
+                ready(network)
             }
             override fun onLost(network: Network) {
                 if(token!=generation || current!=network)return
-                current=null;lost();state("Χάθηκε το SYNC · αναμονή επανασύνδεσης...")
+                current=null;delivered=null;lost();state("Χάθηκε το SYNC · αναμονή επανασύνδεσης...")
             }
             override fun onUnavailable() {
                 if(token==generation)state("Δεν ολοκληρώθηκε η σύνδεση SYNC. Έλεγξε AP, κωδικό και άδειες Android. Σε Android 10–12 έλεγξε και την ενεργοποίηση Τοποθεσίας.")
@@ -82,14 +94,10 @@ class WifiNetworkConnection(
 
     /** Manual association needs no SSID/location query. The HELLO proves the endpoint. */
     fun useCurrent() {
-        fun matches(properties: LinkProperties?) = properties?.linkAddresses?.any {
-            val bytes=it.address.address
-            bytes.size==4 && bytes[0].toInt() and 255==192 && bytes[1].toInt() and 255==168 && bytes[2].toInt() and 255==4
-        }==true
         // Keep a connection already owned by this app alive while reusing it.
         // Unregistering its request first could make Android disconnect the AP.
         current?.let { network ->
-            if(matches(cm.getLinkProperties(network))) {
+            if(hasEspAddress(cm.getLinkProperties(network))) {
                 pendingPassword=null
                 state("Χρήση υπάρχουσας σύνδεσης Wi-Fi · επαλήθευση ESP32...")
                 ready(network)
@@ -98,14 +106,15 @@ class WifiNetworkConnection(
         }
         release();val token=generation
         fun select(network: Network,properties: LinkProperties?) {
-            if(token!=generation || current==network || !matches(properties))return
-            current=network;state("Τρέχον Wi-Fi 192.168.4.x · επαλήθευση ESP32...");ready(network)
+            if(token!=generation || delivered==network || !hasEspAddress(properties))return
+            current=network;delivered=network
+            state("Τρέχον Wi-Fi 192.168.4.x · επαλήθευση ESP32...");ready(network)
         }
         val cb=object : ConnectivityManager.NetworkCallback() {
             override fun onLinkPropertiesChanged(network: Network,properties: LinkProperties) {select(network,properties)}
             override fun onLost(network: Network) {
                 if(token!=generation || current!=network)return
-                current=null;lost();state("Χάθηκε η σύνδεση Wi-Fi. Συνδέσου ξανά στο SYNC.")
+                current=null;delivered=null;lost();state("Χάθηκε η σύνδεση Wi-Fi. Συνδέσου ξανά στο SYNC.")
             }
         }
         callback=cb
@@ -125,6 +134,7 @@ class WifiNetworkConnection(
         generation++;pendingPassword=null
         callback?.let { try{cm.unregisterNetworkCallback(it)}catch(_:IllegalArgumentException){} }
         callback=null
+        delivered=null
         if(current!=null){current=null;lost()}
     }
     override fun close(){release()}
