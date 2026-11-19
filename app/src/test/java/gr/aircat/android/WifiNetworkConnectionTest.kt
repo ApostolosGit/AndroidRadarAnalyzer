@@ -21,7 +21,16 @@ import org.robolectric.annotation.LooperMode
 class WifiNetworkConnectionTest {
     private fun network(id: Int): Network = Network::class.java.getDeclaredConstructor(Int::class.javaPrimitiveType)
         .apply{isAccessible=true}.newInstance(id)
-    private fun properties(ip: String)=LinkProperties().apply{addLinkAddress(LinkAddress(ip))}
+    private fun properties(ip: String): LinkProperties {
+        // These framework builders are hidden from the public Android SDK;
+        // only the JVM test uses reflection to construct callback fixtures.
+        val address=LinkAddress::class.java.getDeclaredConstructor(String::class.java)
+            .apply{isAccessible=true}.newInstance(ip)
+        return LinkProperties().also { properties ->
+            LinkProperties::class.java.getDeclaredMethod("addLinkAddress",LinkAddress::class.java)
+                .apply{isAccessible=true}.invoke(properties,address)
+        }
+    }
     private fun callback(c: WifiNetworkConnection)=WifiNetworkConnection::class.java.getDeclaredField("callback")
         .apply{isAccessible=true}.get(c) as ConnectivityManager.NetworkCallback
     private fun grant(activity: MainActivity) {
