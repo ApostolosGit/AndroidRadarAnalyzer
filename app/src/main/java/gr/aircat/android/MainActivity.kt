@@ -61,6 +61,7 @@ class MainActivity : Activity() {
     private val scalableText = ArrayList<java.lang.ref.WeakReference<TextView>>()
     private var pauseOnErrors = false
     private var errorNorthTimes: Set<Double> = emptySet()
+    private var livePlayDialog: LivePlayDialog? = null
 
     private lateinit var info: TextView
     private lateinit var monitor: TextView
@@ -148,7 +149,7 @@ class MainActivity : Activity() {
         root.requestApplyInsets()
 
         root.addView(title("AIRCAT500 Mobile  v2.2", 16f))
-        val open = button("Άνοιγμα", 11f) { chooseFile() }
+        val open = button("Άνοιγμα", 11f) { chooseOpenSource() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 10f) { showReport() }
         val settings = button("Ρυθμίσεις", 9f) { showSettings() }
@@ -288,6 +289,39 @@ class MainActivity : Activity() {
         chartToolbar.visibility = if (index == 4) View.VISIBLE else View.GONE
         monitorToolbar.visibility = if (index == 1) View.VISIBLE else View.GONE
         if (index == 1 || index == 2 || index == 3) refreshAnalysisPages()
+    }
+
+    // Additive routing only: the original v2.2 chooseFile() and replay
+    // implementation below are intentionally kept byte-for-byte unchanged.
+    private fun chooseOpenSource() {
+        AlertDialog.Builder(this)
+            .setTitle("Άνοιγμα")
+            .setItems(arrayOf("Από Αρχείο", "LivePlay")) { _, source ->
+                if (source == 0) chooseFile() else chooseLivePlayScreen()
+            }
+            .show()
+    }
+
+    private fun chooseLivePlayScreen() {
+        AlertDialog.Builder(this)
+            .setTitle("LivePlay — επιλογή προβολής")
+            .setItems(arrayOf("Live Radar Display", "Radar Serial Line Monitoring")) { _, screen ->
+                showLivePlay(screen)
+            }
+            .show()
+    }
+
+    private fun showLivePlay(screen: Int) {
+        if (livePlayDialog?.isShowing == true) return
+        val dialog = LivePlayDialog(
+            owner = this,
+            settings = { LivePlaySettings(currentFilter, maxRangeNm, maxRingNm, aircraftLabelSp, uiTextSp) },
+            inspectTrack = { track -> showTrack(track) },
+            initialScreen = screen
+        )
+        livePlayDialog = dialog
+        dialog.setOnDismissListener { if (livePlayDialog === dialog) livePlayDialog = null }
+        dialog.show()
     }
 
     private fun chooseFile() {
@@ -909,7 +943,19 @@ class MainActivity : Activity() {
         startActivityForResult(intent, 78)
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == WifiNetworkConnection.PERMISSION_REQUEST) {
+            val granted = grantResults.isNotEmpty() &&
+                grantResults.all { it == android.content.pm.PackageManager.PERMISSION_GRANTED }
+            livePlayDialog?.permissionResult(granted)
+        }
+    }
+
     override fun onDestroy() {
+        livePlayDialog?.dismiss()
         ui.removeCallbacks(ticker)
         worker.shutdownNow()
         super.onDestroy()
