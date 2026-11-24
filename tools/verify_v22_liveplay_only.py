@@ -12,6 +12,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = json.loads(r'''{".github/workflows/android.yml":"01a5e89d53760cca68d03f548b2bf9e914eea23a",".github/workflows/import-v1.yml":"32ec2c0a267e60af02aa91a90f26c174205330d2",".gitignore":"d965e8b65d5b921a3f7169401b5d58734ca82189","OfflineRegression.kt":"55e3f7df811000a8b68ce8931badfba24dc5485b","README.md":"c9d9d9031b1cf4f6fb023b8d4df3a55adf6df505","app/build.gradle.kts":"bf9285429a9e673097e523e90b0f0fc10df29be2","app/src/main/AndroidManifest.xml":"3e22809294faa593532177dded863216feec996f","app/src/main/java/gr/aircat/android/AircatAnalysis.kt":"60aea53df2046a8236212bc05102fc29717c6cfc","app/src/main/java/gr/aircat/android/AircatBsc.kt":"aaf931026b5f7462b8180b3ce6824e03fd4889c7","app/src/main/java/gr/aircat/android/AircatCore.kt":"37e577057fde130ac806dd393715ecf90b5ae742","app/src/main/java/gr/aircat/android/AircatDesktopSummary.kt":"62654dfab5c5129e4c4371d600b8f347097d5e25","app/src/main/java/gr/aircat/android/AircatPcap.kt":"cb63dd9d5969a3b1dfa977af0b7428cfcc367790","app/src/main/java/gr/aircat/android/ChartView.kt":"0d01a7dde638ee80bdf4437c16e237af294b2264","app/src/main/java/gr/aircat/android/MainActivity.kt":"c968757e5b3f1103c34913154f9f06f61be6abdf","app/src/main/java/gr/aircat/android/RadarView.kt":"90653b966bab5261365d5fc5b24c5acb4f8865cc","app/src/main/res/values/strings.xml":"e9bd8035f27e5a818bd3fff1ccf11b5ac60dca3e","app/src/test/java/gr/aircat/android/AircatCoreTest.kt":"51d06d1a1b76260109e5efe73844038ae6fd94af","app/src/test/java/gr/aircat/android/AircatV1Test.kt":"61e6e5d3986a4ce8ddda50c592139117d87e4f80","app/src/test/java/gr/aircat/android/AircatV21Test.kt":"768b6b973956cac2668e5c22ad28a81e6653a00a","app/src/test/java/gr/aircat/android/AircatV22Test.kt":"1833b61915d2be24ad483d659f6d762a8d4f126f","app/src/test/java/gr/aircat/android/AircatV2Test.kt":"25f9893441588b21247ef7a5a4d432ca6756a8e1","build.gradle.kts":"574eee7f99df7a75dac56af61ecbf149cc2fa79b","gradle.properties":"e6961679fc95d6da9ab1dc56ee2e9d98ecbe6e63","gradle/wrapper/gradle-wrapper.properties":"f7c982e50017648567eed12d79498f3f22773db4","settings.gradle.kts":"3935bd12acfbc4cc1a8c9902876189cf91cb5e85"}''')
 ADDITIONS = set(json.loads(r'''["app/src/main/java/gr/aircat/android/AircatWifiProtocol.kt","app/src/main/java/gr/aircat/android/AircatBscStream.kt","app/src/main/java/gr/aircat/android/AircatWifiSession.kt","app/src/main/java/gr/aircat/android/WifiNetworkConnection.kt","app/src/main/java/gr/aircat/android/LivePlayDialog.kt","app/src/test/java/gr/aircat/android/LivePlayProtocolTest.kt",".github/workflows/liveplay-only.yml","tools/verify_v22_liveplay_only.py","LIVEPLAY_PORT_GR.md"]'''))
+ADDITIONS.update(["app/src/main/java/gr/aircat/android/SyncCredentials.kt","app/src/main/java/gr/aircat/android/LiveCsv.kt","app/src/test/java/gr/aircat/android/LiveV4Test.kt"])
 OLD_MAIN = 'app/src/main/java/gr/aircat/android/MainActivity.kt'
 OLD_GRADLE = 'app/build.gradle.kts'
 OLD_MANIFEST = 'app/src/main/AndroidManifest.xml'
@@ -20,7 +21,8 @@ def blob_sha(source: bytes) -> str:
     return hashlib.sha1(b'blob ' + str(len(source)).encode() + b'\0' + source).hexdigest()
 
 def normalize_main(src: str) -> str:
-    src = src.replace("AIRCAT500 Mobile  v3.0", "AIRCAT500 Mobile  v2.2")
+    src = src.replace("        if (requestCode == 2304) {\n            livePlayDialog?.recordDestination(if (resultCode == RESULT_OK) data?.data else null)\n            return\n        }\n", "")
+    src = src.replace("AIRCAT500 Mobile  v4.0", "AIRCAT500 Mobile  v2.2")
     src = src.replace("Android offline radar analysis & replay + LivePlay\\n", "Android offline radar analysis & replay\\n")
     src = src.replace("Desktop reference: Python Analyzer v9.16 (offline), v40.0 (LivePlay)\\n", "Desktop reference: Python Analyzer v9.16\\n")
     src = src.replace("LivePlay: SYNC2WIFI (Live Radar Display / Radar Serial Line Monitoring). USB live is not included.\\n", "SYNC2USB live Wi-Fi/USB: not included in this build.\\n")
@@ -40,14 +42,14 @@ def normalize_main(src: str) -> str:
 def normalize_gradle(src: str) -> str:
     return (src.replace('applicationId = "gr.aircat.androidradaranalyzer.liveplay"',
                         'applicationId = "gr.aircat.androidradaranalyzer"')
-               .replace('versionCode = 10', 'versionCode = 8')
-               .replace('versionName = "3.0"', 'versionName = "2.2"'))
+               .replace('versionCode = 11', 'versionCode = 8')
+               .replace('versionName = "4.0"', 'versionName = "2.2"'))
 
 def normalize_manifest(src: str) -> str:
     src, count = re.subn(r'    <!-- LivePlay adds only Android local Wi-Fi association and UDP transport. -->.*?(?=    <application )',
                          '', src, count=1, flags=re.S)
     assert count == 1, 'Live-only permission declarations missing or changed'
-    return src.replace('android:label="AIRCAT500 Mobile v3.0"', 'android:label="AIRCAT500 Mobile"')
+    return src.replace('android:label="AIRCAT500 Mobile v4.0"', 'android:label="AIRCAT500 Mobile"')
 
 for path, expected in BASELINE.items():
     file = ROOT / path
@@ -71,11 +73,15 @@ assert not missing, f'LivePlay additions missing: {sorted(missing)}'
 
 main = (ROOT / OLD_MAIN).read_text(encoding='utf-8')
 dialog = (ROOT / 'app/src/main/java/gr/aircat/android/LivePlayDialog.kt').read_text(encoding='utf-8')
-assert '.setItems(arrayOf("Από Αρχείο", "LivePlay"))' in main
+assert '.setItems(arrayOf("Αρχείο", "SYNC2WIFI"))' in main
 assert 'if (source == 0) chooseFile() else chooseLivePlayScreen()' in main
-assert '.setItems(arrayOf("Live Radar Display", "Radar Serial Line Monitoring"))' in main
-assert 'button("Live Radar Display")' in dialog
-assert 'button("Radar Serial Line Monitoring")' in dialog
+assert '.setItems(arrayOf("Live Radar Display", "Radar Serial Line Monitor"))' in main
+assert 'button("Σύνδεση SYNC")' in dialog
+assert 'button("Record")' in dialog
+assert 'Εμφάνιση κωδικού / PIN' in dialog
+assert 'if (!attempted)' in dialog
+assert 'button("Τρέχον Wi-Fi")' not in dialog
+assert 'button("Wi-Fi κινητού")' not in dialog
 assert not any(f'button("{tab}")' in dialog for tab in ('Errors', 'Alerts', 'Charts', 'Report', 'CSV Record'))
 assert 'APP_PASSWORD' not in dialog  # No hardcoded Wi-Fi credential
 print(f"PASS: exact v2.2 release preservation ({len(BASELINE)} files), "

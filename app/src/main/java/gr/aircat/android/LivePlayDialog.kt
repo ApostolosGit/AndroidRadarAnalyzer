@@ -9,7 +9,14 @@ import android.graphics.Color
 import android.net.Network
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
+import android.net.Uri
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.text.method.PasswordTransformationMethod
+import android.widget.CheckBox
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import android.text.InputFilter
 import android.text.InputType
 import android.view.Gravity
@@ -42,7 +49,7 @@ class LivePlayDialog(
     private val ui = Handler(Looper.getMainLooper())
     private val replay = RadarReplayState()
     private var session: AircatWifiSession? = null
-    private var networkMessage = "Σύνδεσε το κινητό στο Wi-Fi SYNC."
+    private var networkMessage = "Αναμονή σύνδεσης SYNC..."
     private var pin = "1234"
     private var closed = false
     private var screen = initialScreen.coerceIn(0, 1)
@@ -55,12 +62,26 @@ class LivePlayDialog(
     private lateinit var monitor: TextView
     private lateinit var radarPanel: FrameLayout
     private lateinit var monitorPanel: ScrollView
-    private lateinit var radarTab: Button
-    private lateinit var monitorTab: Button
+    private lateinit var connectButton: Button
+    private lateinit var recordButton: Button
+    private lateinit var troubleshooting: TextView
+    private lateinit var radarCounters: TextView
+    private val credentials = SyncCredentials(owner)
+    private var connecting = false
+    private var attempted = false
+    private var recorder: WifiCsvRecorder? = null
+    private var recordPending: AircatWifiSession? = null
+    private var recordMessage = ""
+    private var login: SyncLogin? = null
 
     private val connection = WifiNetworkConnection(
         owner,
-        state = { if (!closed) networkMessage = it },
+        state = { if (!closed) {
+            networkMessage = it
+            if (it.startsWith("Δεν ολοκληρώθηκε") || it.startsWith("Αδυναμία") ||
+                it.startsWith("Η άδεια δεν") || it.startsWith("Android 8/9") ||
+                it.startsWith("Χάθηκε η σύνδεση")) connecting = false
+        } },
         ready = { network: Network ->
             if (!closed) {
                 stopSession()
@@ -108,21 +129,19 @@ class LivePlayDialog(
             setBackgroundColor(Color.rgb(224, 243, 253))
             setPadding(dp(5), dp(5), dp(5), dp(5))
         }
-        root.addView(label("AIRCAT500 LivePlay · SYNC2WIFI"))
-        status = label(networkMessage).apply { maxLines = 4 }
+        root.addView(label(if (screen == 0) "Live Radar Display · SYNC2WIFI" else "Radar Serial Line Monitor · SYNC2WIFI"))
+        status = label(networkMessage).apply { textSize = 13f }
         root.addView(status)
-        root.addView(row(
-            button("Σύνδεση SYNC") { askCredentials(manual = false) },
-            button("Τρέχον Wi-Fi") { askCredentials(manual = true) },
-            button("Stop") { disconnect() }
-        ))
-        root.addView(row(
-            button("Wi-Fi κινητού") { owner.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) },
-            button("Κλείσιμο") { dismiss() }
-        ))
-        radarTab = button("Live Radar Display") { selectScreen(0) }
-        monitorTab = button("Radar Serial Line Monitoring") { selectScreen(1) }
-        root.addView(row(radarTab, monitorTab, height = 57))
+        connectButton = button("Σύνδεση SYNC") {
+            if (connecting || session?.snapshot?.running == true) disconnect() else connect(false)
+        }
+        recordButton = button("Record") { recordTapped() }.apply { isEnabled = false }
+        root.addView(if (screen == 0) row(connectButton, recordButton, button("Κλείσιμο") { dismiss() })
+            else row(connectButton, button("Κλείσιμο") { dismiss() }))
+        troubleshooting = label("").apply { textSize = 12f }
+        root.addView(troubleshooting)
+        radarCounters = label("").apply { textSize = 12f }
+        if (screen == 0) root.addView(radarCounters)
 
         radar = RadarView(owner).apply {
             state = replay
@@ -154,73 +173,113 @@ class LivePlayDialog(
         content.addView(monitorPanel, FrameLayout.LayoutParams(-1, -1))
         root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
-        selectScreen(screen)
+        radarPanel.visibility = if (screen == 0) View.VISIBLE else View.GONE
+        monitorPanel.visibility = if (screen == 1) View.VISIBLE else View.GONE
     }
 
     override fun onStart() {
         super.onStart()
         window?.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        ui.removeCallbacks(tick)
         ui.post(tick)
+        if (!attempted) { attempted = true; ui.post { if (!closed) connect(true) } }
     }
 
     fun permissionResult(granted: Boolean) { connection.permissionResult(granted) }
 
-    private fun selectScreen(which: Int) {
-        screen = which.coerceIn(0, 1)
-        radarPanel.visibility = if (screen == 0) View.VISIBLE else View.GONE
-        monitorPanel.visibility = if (screen == 1) View.VISIBLE else View.GONE
-        radarTab.alpha = if (screen == 0) 1f else .62f
-        monitorTab.alpha = if (screen == 1) 1f else .62f
+    private fun connect(auto: Boolean) {
+        val saved = login ?: credentials.load()
+        if (saved != null && auto) begin(saved) else askCredentials(saved)
     }
 
-    private fun askCredentials(manual: Boolean) {
+    private fun begin(value: SyncLogin) {
+        login = value
+        pin = value.pin
+        connecting = true
+        networkMessage = "Αναμονή σύνδεσης SYNC..."
+        connection.connect(value.password)
+    }
+
+    private fun askCredentials(saved: SyncLogin?) {
         val box = LinearLayout(owner).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(15), dp(7), dp(15), dp(7))
         }
-        box.addView(label(
-            if (manual) "Σύνδεσε πρώτα το κινητό στο SYNC από τις ρυθμίσεις Wi-Fi."
-            else "Το Android θα ζητήσει σύνδεση στο SYNC (χωρίς Internet)."
-        ))
+        box.addView(label("Wi-Fi SYNC · χωρίς Internet"))
         val password = EditText(owner).apply {
             hint = "Κωδικός Wi-Fi SYNC"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(saved?.password ?: "")
             textSize = settings().uiSp
         }
-        if (!manual) box.addView(password)
         val enteredPin = EditText(owner).apply {
-            hint = "PIN εφαρμογής"
-            setText(pin)
+            hint = "PIN"
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
             filters = arrayOf(InputFilter.LengthFilter(4))
+            setText(saved?.pin ?: "1234")
             textSize = settings().uiSp
         }
+        box.addView(password)
         box.addView(enteredPin)
-        val dialog = AlertDialog.Builder(owner)
-            .setTitle("LivePlay — SYNC")
-            .setView(box)
-            .setPositiveButton("Σύνδεση", null)
-            .setNegativeButton("Άκυρο", null)
-            .create()
+        box.addView(CheckBox(owner).apply {
+            text = "Εμφάνιση κωδικού / PIN"
+            setOnCheckedChangeListener { _, show ->
+                for (field in listOf(password, enteredPin)) {
+                    field.transformationMethod = if (show) null else PasswordTransformationMethod.getInstance()
+                    field.setSelection(field.text.length)
+                }
+            }
+        })
+        val dialog = AlertDialog.Builder(owner).setTitle("SYNC2WIFI")
+            .setView(box).setPositiveButton("Σύνδεση", null)
+            .setNegativeButton("Άκυρο", null).create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val newPin = enteredPin.text.toString()
-                if (!Regex("[0-9]{4}").matches(newPin)) {
-                    enteredPin.error = "Χρειάζονται 4 ψηφία"
-                    return@setOnClickListener
-                }
-                if (!manual && password.text.length !in 8..63) {
-                    password.error = "8–63 χαρακτήρες"
-                    return@setOnClickListener
-                }
-                pin = newPin
                 val pass = password.text.toString()
+                val newPin = enteredPin.text.toString()
+                if (pass.length !in 8..63) { password.error = "8–63 χαρακτήρες"; return@setOnClickListener }
+                if (!Regex("[0-9]{4}").matches(newPin)) { enteredPin.error = "4 ψηφία"; return@setOnClickListener }
+                val value = SyncLogin(pass, newPin)
+                val stored = credentials.save(value)
                 dialog.dismiss()
-                if (manual) connection.useCurrent() else connection.automatic(pass)
+                begin(value)
+                if (!stored) android.widget.Toast.makeText(owner, "Δεν αποθηκεύτηκαν τα στοιχεία στο Android Keystore.", android.widget.Toast.LENGTH_LONG).show()
             }
         }
         dialog.show()
+    }
+
+    private fun recordTapped() {
+        recorder?.let { if (!it.finished) { it.stop(); return } }
+        val current = session ?: return
+        if (!current.snapshot.running || !current.snapshot.transport.acknowledged) return
+        recordPending = current
+        try {
+            owner.startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "text/csv"
+                putExtra(Intent.EXTRA_TITLE, "AIRCAT500_SYNC2WIFI_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".csv")
+            }, 2304)
+        } catch (ex: Exception) {
+            recordPending = null
+            recordMessage = "Αδυναμία επιλογής αρχείου: " + ex.message
+        }
+    }
+
+    fun recordDestination(uri: Uri?) {
+        val current = recordPending
+        recordPending = null
+        if (uri == null || closed || current == null || current !== session) return
+        try {
+            recordMessage = ""
+            recorder = current.record(onFinished = { rows, error ->
+                ui.post {
+                    recordMessage = error ?: if (rows > 0) "CSV αποθηκεύτηκε: $rows frames" else "CSV χωρίς δεδομένα (0 frames)"
+                    if (closed) android.widget.Toast.makeText(owner, recordMessage, android.widget.Toast.LENGTH_LONG).show()
+                }
+            }) { owner.contentResolver.openOutputStream(uri, "wt") ?: error("Αδυναμία ανοίγματος CSV") }
+        } catch (ex: Exception) { recordMessage = "Record: " + ex.message }
     }
 
     private fun stopSession() {
@@ -229,9 +288,10 @@ class LivePlayDialog(
     }
 
     private fun disconnect() {
+        connecting = false
         connection.close()
         stopSession()
-        networkMessage = "Η ζωντανή λήψη σταμάτησε."
+        networkMessage = "Η σύνδεση διακόπηκε."
     }
 
     private val tick = object : Runnable {
@@ -261,19 +321,48 @@ class LivePlayDialog(
                     ).toFloat()
                 }
                 val snap = current.snapshot
-                status.text = "${snap.message}\n${snap.transport.firmwareLabel} · CLOCK ${snap.transport.clockHz} Hz" +
-                    "\nCRC ${snap.bsc.crcErrors} · Framing ${snap.bsc.framingErrors} · UDP lost ${snap.transport.lost}"
+                if (!snap.running) {
+                    connecting = false
+                    networkMessage = snap.message
+                    connection.close()
+                    stopSession()
+                }
+                status.text = if (!snap.running) snap.message
+                    else if (!snap.transport.acknowledged) "Αναμονή σύνδεσης · HELLO/ACK..."
+                    else if (snap.lastDataAgoMs == null || snap.lastDataAgoMs > 3000) "Σύνδεση επιτυχής · αναμονή πακέτων..."
+                    else "Ζωντανή λήψη SYNC2WIFI"
+                status.append("\n" + snap.transport.firmwareLabel + " · CLOCK " + snap.transport.clockHz + " Hz")
                 if (screen == 1) monitor.text = monitorText(snap, current)
+                if (screen == 0) radarCounters.text = radarSummary(snap)
             }
+            val snap = session?.snapshot
+            val live = snap?.running == true && snap.lastDataAgoMs?.let { it <= 3000 } == true
+            val active = connecting || snap?.running == true
+            connectButton.text = if (active) "Διακοπή Σύνδεσης" else "Σύνδεση SYNC"
+            troubleshooting.visibility = if (live) View.GONE else View.VISIBLE
+            troubleshooting.text = when {
+                snap?.transport?.acknowledged == true -> "✓ Wi-Fi / DHCP · ✓ HELLO/ACK\nΑναμονή UDP 5005: έλεγξε CLOCK/DATA."
+                snap != null -> "✓ Wi-Fi / DHCP · αναμονή ACK 5006\nΈλεγξε PIN και firmware."
+                else -> "Έλεγξε ότι το SYNC είναι ενεργό και ο υπολογιστής έχει αποσυνδεθεί. Το ESP32 δέχεται 1 συσκευή. Επιβεβαίωσε το αίτημα Android / άδεια Wi-Fi. Αν χρειαστεί, συνδέσου από τις ρυθμίσεις Android και ξαναδοκίμασε."
+            } + if (login != null || credentials.hasSaved()) "\nPassword: **** · PIN: ****" else ""
+            val rec = recorder
+            recordButton.text = when {
+                rec == null || rec.finished -> "Record"
+                rec.isAccepting() -> "REC " + rec.rows + " · Stop"
+                else -> "Αποθήκευση..."
+            }
+            recordButton.isEnabled = recordPending == null && (rec?.isAccepting() == true ||
+                ((rec == null || rec.finished) && snap?.running == true && snap.transport.acknowledged))
+            if (recordMessage.isNotEmpty()) status.append("\n" + recordMessage)
             ui.postDelayed(this, 100)
         }
     }
 
-    private fun monitorText(s: WifiSessionSnapshot, current: AircatWifiSession): String {
+    private fun monitorText(s: WifiSessionSnapshot, current: AircatWifiSession): CharSequence {
         val transport = s.transport
         val bsc = s.bsc
-        return buildString {
-            appendLine("AIRCAT500 — Radar Serial Line Monitoring")
+        val plain = buildString {
+            appendLine("AIRCAT500 — Radar Serial Line Monitor")
             appendLine("Wi-Fi SYNC · ESP32-S3 192.168.4.1 · UDP DATA 5005 / HELLO 5006")
             appendLine(transport.firmwareLabel)
             appendLine("CLOCK: ${transport.clockHz} Hz · ${s.message}")
@@ -288,6 +377,7 @@ class LivePlayDialog(
             appendLine("Current sectors: ${bsc.currentUnique ?: "—"} / 32")
             appendLine()
             appendLine("UDP received: ${transport.received} · Lost: ${transport.lost}")
+            appendLine("Scan missed: "+s.timing.missed+" · North jitter: "+s.timing.jitter+" (arrival timing)")
             appendLine("UDP duplicates: ${transport.duplicates} · Invalid: ${transport.invalid}")
             appendLine("UDP CRC32 FAIL: ${transport.badCrc32}")
             appendLine("Firmware overflow: ${transport.firmwareOverflow} · Since connect: +${transport.overflowSinceConnect}")
@@ -299,6 +389,31 @@ class LivePlayDialog(
             } ?: appendLine("Αναμονή πρώτου CRC-valid AIRCAT frame...")
             if (bsc.lastError.isNotBlank()) appendLine("\nΤελευταίο σφάλμα: ${bsc.lastError}")
         }
+        return colored(plain, listOf("CRC FAIL", "Framing", "Missing clean", "Uncertain", "Duplicates",
+            "Order errors", "Lost", "Invalid", "UDP CRC32 FAIL", "Firmware overflow", "Since connect",
+            "Link resets", "Display dropped", "Scan missed", "North jitter"))
+    }
+
+    private fun colored(value: String, labels: List<String>): CharSequence {
+        val out = SpannableStringBuilder(value)
+        for (name in labels) {
+            val re = Regex(Regex.escape(name) + "[: ]+\\s*[+]?\\d+")
+            for (match in re.findAll(value)) {
+                out.setSpan(ForegroundColorSpan(Color.RED), match.range.first,
+                    match.range.last + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }
+        return out
+    }
+
+    private fun radarSummary(s: WifiSessionSnapshot): CharSequence {
+        val b = s.bsc
+        val text = "packet #" + (lastPacket?.frameNo ?: 0) + " · tracks " + replay.tracksBySector.values.sumOf { it.size } +
+            " · NORTH " + b.north + " · Sector " + (replay.sector ?: "—") +
+            "\nsector missing: " + (b.missingClean + b.missingUncertain) + " · scan missed: " + s.timing.missed +
+            " · north jitter: " + s.timing.jitter +
+            "\nCRC FAIL: " + b.crcErrors + " · Framing: " + b.framingErrors + " · UDP lost: " + s.transport.lost
+        return colored(text, listOf("sector missing", "scan missed", "north jitter", "CRC FAIL", "Framing", "UDP lost"))
     }
 
     override fun dismiss() {

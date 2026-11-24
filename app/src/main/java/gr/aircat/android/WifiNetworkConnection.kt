@@ -35,6 +35,16 @@ class WifiNetworkConnection(
             (bytes[1].toInt() and 255)==168 && (bytes[2].toInt() and 255)==4
     }==true
 
+    // Reuse a system-connected local AP before requesting a new association.
+    // HELLO/ACK still verifies the endpoint; a subnet alone is not success.
+    fun connect(password: String) {
+        val existing = cm.allNetworks.any { network ->
+            cm.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true &&
+                hasEspAddress(cm.getLinkProperties(network))
+        }
+        if (existing) useCurrent() else automatic(password)
+    }
+
     fun automatic(password: String) {
         if(Build.VERSION.SDK_INT<29) {
             state("Android 8/9: συνδέσου στο SYNC από τις ρυθμίσεις Wi-Fi και επίλεξε «Τρέχον Wi-Fi».")
@@ -80,7 +90,7 @@ class WifiNetworkConnection(
                 current=null;delivered=null;lost();state("Χάθηκε το SYNC · αναμονή επανασύνδεσης...")
             }
             override fun onUnavailable() {
-                if(token==generation)state("Δεν ολοκληρώθηκε η σύνδεση SYNC. Έλεγξε AP, κωδικό και άδειες Android. Σε Android 10–12 έλεγξε και την ενεργοποίηση Τοποθεσίας.")
+                if(token==generation)state("Δεν ολοκληρώθηκε η σύνδεση Wi-Fi SYNC (Android timeout). Δεν επιβεβαιώθηκε ακόμη το PIN.")
             }
         }
         callback=cb

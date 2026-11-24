@@ -148,7 +148,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v3.0", 16f))
+        root.addView(title("AIRCAT500 Mobile  v4.0", 16f))
         val open = button("Άνοιγμα", 11f) { chooseOpenSource() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 10f) { showReport() }
@@ -296,7 +296,7 @@ class MainActivity : Activity() {
     private fun chooseOpenSource() {
         AlertDialog.Builder(this)
             .setTitle("Άνοιγμα")
-            .setItems(arrayOf("Από Αρχείο", "LivePlay")) { _, source ->
+            .setItems(arrayOf("Αρχείο", "SYNC2WIFI")) { _, source ->
                 if (source == 0) chooseFile() else chooseLivePlayScreen()
             }
             .show()
@@ -304,8 +304,8 @@ class MainActivity : Activity() {
 
     private fun chooseLivePlayScreen() {
         AlertDialog.Builder(this)
-            .setTitle("LivePlay — επιλογή προβολής")
-            .setItems(arrayOf("Live Radar Display", "Radar Serial Line Monitoring")) { _, screen ->
+            .setTitle("SYNC2WIFI — επιλογή προβολής")
+            .setItems(arrayOf("Live Radar Display", "Radar Serial Line Monitor")) { _, screen ->
                 showLivePlay(screen)
             }
             .show()
@@ -340,6 +340,10 @@ class MainActivity : Activity() {
     @Deprecated("Document picker compatibility on Android API 26+")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 2304) {
+            livePlayDialog?.recordDestination(if (resultCode == RESULT_OK) data?.data else null)
+            return
+        }
         if (resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         if (requestCode == 78) {
