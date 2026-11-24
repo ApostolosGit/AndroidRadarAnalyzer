@@ -11,8 +11,8 @@ android {
         applicationId = "gr.aircat.androidradaranalyzer.liveplay"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "2.2-liveplay"
+        versionCode = 10
+        versionName = "3.0"
     }
 
     compileOptions {

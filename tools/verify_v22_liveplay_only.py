@@ -20,6 +20,10 @@ def blob_sha(source: bytes) -> str:
     return hashlib.sha1(b'blob ' + str(len(source)).encode() + b'\0' + source).hexdigest()
 
 def normalize_main(src: str) -> str:
+    src = src.replace("AIRCAT500 Mobile  v3.0", "AIRCAT500 Mobile  v2.2")
+    src = src.replace("Android offline radar analysis & replay + LivePlay\\n", "Android offline radar analysis & replay\\n")
+    src = src.replace("Desktop reference: Python Analyzer v9.16 (offline), v40.0 (LivePlay)\\n", "Desktop reference: Python Analyzer v9.16\\n")
+    src = src.replace("LivePlay: SYNC2WIFI (Live Radar Display / Radar Serial Line Monitoring). USB live is not included.\\n", "SYNC2USB live Wi-Fi/USB: not included in this build.\\n")
     src = src.replace('    private var livePlayDialog: LivePlayDialog? = null\n', '')
     src = src.replace('val open = button("Άνοιγμα", 11f) { chooseOpenSource() }',
                       'val open = button("Άνοιγμα", 11f) { chooseFile() }')
@@ -36,14 +40,14 @@ def normalize_main(src: str) -> str:
 def normalize_gradle(src: str) -> str:
     return (src.replace('applicationId = "gr.aircat.androidradaranalyzer.liveplay"',
                         'applicationId = "gr.aircat.androidradaranalyzer"')
-               .replace('versionCode = 9', 'versionCode = 8')
-               .replace('versionName = "2.2-liveplay"', 'versionName = "2.2"'))
+               .replace('versionCode = 10', 'versionCode = 8')
+               .replace('versionName = "3.0"', 'versionName = "2.2"'))
 
 def normalize_manifest(src: str) -> str:
     src, count = re.subn(r'    <!-- LivePlay adds only Android local Wi-Fi association and UDP transport. -->.*?(?=    <application )',
                          '', src, count=1, flags=re.S)
     assert count == 1, 'Live-only permission declarations missing or changed'
-    return src.replace('android:label="AIRCAT500 LivePlay"', 'android:label="AIRCAT500 Mobile"')
+    return src.replace('android:label="AIRCAT500 Mobile v3.0"', 'android:label="AIRCAT500 Mobile"')
 
 for path, expected in BASELINE.items():
     file = ROOT / path

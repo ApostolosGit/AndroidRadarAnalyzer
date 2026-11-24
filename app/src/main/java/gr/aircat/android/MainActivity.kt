@@ -148,7 +148,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v2.2", 16f))
+        root.addView(title("AIRCAT500 Mobile  v3.0", 16f))
         val open = button("Άνοιγμα", 11f) { chooseOpenSource() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 10f) { showReport() }
@@ -886,11 +886,11 @@ class MainActivity : Activity() {
         val version = packageManager.getPackageInfo(packageName,0).versionName
         AlertDialog.Builder(this).setTitle("About AIRCAT500 Mobile")
             .setMessage("AIRCAT500 Mobile v$version\n" +
-                "Android offline radar analysis & replay\n" +
+                "Android offline radar analysis & replay + LivePlay\n" +
                 "Decoder: AIRCAT500 BSC / CSV / BIN / PCAP / PCAPNG\n" +
                 "Radar: 20 NM initial, 5 NM rings up to ${maxRingNm} NM\n" +
-                "Desktop reference: Python Analyzer v9.16\n" +
-                "SYNC2USB live Wi-Fi/USB: not included in this build.\n" +
+                "Desktop reference: Python Analyzer v9.16 (offline), v40.0 (LivePlay)\n" +
+                "LivePlay: SYNC2WIFI (Live Radar Display / Radar Serial Line Monitoring). USB live is not included.\n" +
                 "Version v2.2: restored Errors/Alerts, axis labels and zoom buttons.")
             .setPositiveButton("OK",null).show()
     }

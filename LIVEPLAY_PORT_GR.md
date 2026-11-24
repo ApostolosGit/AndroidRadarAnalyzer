@@ -1,4 +1,4 @@
-# AIRCAT500 Mobile v2.2 → LivePlay-only port (Android)
+# AIRCAT500 Mobile v3.0 – LivePlay Edition (Android)
 
 ## Απαράβατο σημείο αναφοράς
 
@@ -9,8 +9,8 @@ https://github.com/ApostolosGit/AndroidRadarAnalyzer/releases/tag/v2.2
 το tag και ο κώδικας `feature/mobile-v2-2-display-fixes` **δεν τροποποιούνται**.
 
 Η παρούσα προσθήκη έχει δικό της branch
-`feature/mobile-v2-2-liveplay-only` και παράγει **ξεχωριστό APK**
-`AIRCAT500_V2.2_LivePlay_parallel.apk`, με Android package
+`feature/mobile-v3-0-liveplay` και παράγει **ξεχωριστό APK**
+`AIRCAT500_V3.0_LivePlay_parallel.apk`, με Android package
 `gr.aircat.androidradaranalyzer.liveplay`. Εγκαθίσταται δίπλα στο
 αυθεντικό v2.2 χωρίς απεγκατάσταση, αλλαγή υπογραφής του αρχικού APK
 ή μεταφορά των ιδιωτικών ρυθμίσεων. Το νέο APK παραμένει debug-signed
@@ -73,7 +73,12 @@ byte-for-byte ίδια. Τα `AircatCore`, `AircatAnalysis`, `RadarView`,
 Για την πρόσβαση στο Wi-Fi προστέθηκαν μόνο οι απαιτούμενες άδειες
 στο AndroidManifest. Η αλλαγή `applicationId`/version στο Gradle
 είναι αποκλειστικά για **παράλληλη εγκατάσταση**, όχι για αντικατάσταση
-του αρχικού v2.2 APK.
+του αρχικού v2.2 APK. Το versionName είναι `3.0`, versionCode `10`.
+Η νέα ονομασία εμφανίζεται στην αρχική οθόνη και στο About, το οποίο
+αναφέρει πλέον τη λειτουργία Wi-Fi LivePlay. Τα ονόματα και το περιεχόμενο
+των offline reports παραμένουν ακριβώς όπως στην v2.2. Το προηγούμενο
+δοκιμαστικό LivePlay APK χρησιμοποιεί το ίδιο package ID· η ενημέρωσή
+του απαιτεί συμβατή υπογραφή ή απεγκατάστασή του, όχι της αυθεντικής v2.2.
 
 Ο `tools/verify_v22_liveplay_only.py` επαληθεύει τις **ακριβείς Git
 blob SHA1 και των 25 αρχικών αρχείων** της επίσημης v2.2. Αναστρέφει

@@ -10,7 +10,7 @@
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="32" />
-    <application android:label="AIRCAT500 LivePlay"
+    <application android:label="AIRCAT500 Mobile v3.0"
         android:allowBackup="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
