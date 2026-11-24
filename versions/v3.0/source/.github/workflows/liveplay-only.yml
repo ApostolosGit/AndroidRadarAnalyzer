@@ -1,0 +1,52 @@
+name: AIRCAT500 Mobile v3.0 LivePlay APK (v2.2 preserved)
+
+on:
+  push:
+    branches: [feature/mobile-v3-0-liveplay]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-liveplay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify official v2.2 remains byte-for-byte preserved
+        run: python3 tools/verify_v22_liveplay_only.py
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install Android SDK 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Unit tests and LivePlay parallel Android APK
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon
+      - name: Package LivePlay APK (does not overwrite v2.2)
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk AIRCAT500_V3.0_LivePlay_parallel.apk
+          sha256sum AIRCAT500_V3.0_LivePlay_parallel.apk > AIRCAT500_V3.0_LivePlay_SHA256SUMS.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging AIRCAT500_V3.0_LivePlay_parallel.apk | head -n 4
+          grep -q "name='gr.aircat.androidradaranalyzer.liveplay'" <("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging AIRCAT500_V3.0_LivePlay_parallel.apk)
+          grep -q "versionName='3.0'" <("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging AIRCAT500_V3.0_LivePlay_parallel.apk)
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIRCAT500_V3.0_LivePlay_parallel_APK
+          path: |
+            AIRCAT500_V3.0_LivePlay_parallel.apk
+            AIRCAT500_V3.0_LivePlay_SHA256SUMS.txt
+      - name: Package full Android Studio project for LivePlay
+        run: zip -qr AIRCAT500_V3.0_LivePlay_AndroidStudio.zip app build.gradle.kts settings.gradle.kts gradle.properties gradle .gitignore LIVEPLAY_PORT_GR.md tools
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIRCAT500_V3.0_LivePlay_AndroidStudio
+          path: AIRCAT500_V3.0_LivePlay_AndroidStudio.zip

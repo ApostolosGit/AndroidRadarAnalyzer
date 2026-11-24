@@ -1,0 +1,55 @@
+name: Archive verified Android version APKs
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/archive-version-apks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: archive-version-apks
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Download original builds and verify checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for v in 2.0 2.1 2.2; do
+            dest="versions/v$v/apk"
+            if [ -f "$dest/AIRCAT500_V$v.zip" ]; then continue; fi
+            mkdir -p "$dest"
+            gh release download "v$v" --repo "$GITHUB_REPOSITORY" --pattern "AIRCAT500_V$v.apk" --pattern "SHA256SUMS.txt" --dir "$dest"
+            (cd "$dest"; sha256sum --check --ignore-missing SHA256SUMS.txt; zip -q "AIRCAT500_V$v.zip" "AIRCAT500_V$v.apk" SHA256SUMS.txt)
+          done
+          for entry in "3.0:45466427812" "4.0:45473706877"; do
+            v="${entry%%:*}"
+            run="${entry##*:}"
+            dest="versions/v$v/apk"
+            if [ -f "$dest/AIRCAT500_V${v}_LivePlay_parallel_APK.zip" ]; then continue; fi
+            mkdir -p "$dest"
+            gh run download "$run" --repo "$GITHUB_REPOSITORY" --name "AIRCAT500_V${v}_LivePlay_parallel_APK" --dir "$dest"
+            (cd "$dest"; sha256sum --check "AIRCAT500_V${v}_LivePlay_SHA256SUMS.txt"; zip -q "AIRCAT500_V${v}_LivePlay_parallel_APK.zip" "AIRCAT500_V${v}_LivePlay_parallel.apk" "AIRCAT500_V${v}_LivePlay_SHA256SUMS.txt")
+          done
+      - name: Save verified APK archives without replacing existing versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f versions/v*/apk/
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Archive original verified Android APKs per version"
+          git push origin HEAD:main
