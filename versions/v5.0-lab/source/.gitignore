@@ -1,0 +1,14 @@
+.gradle/
+build/
+**/build/
+.idea/
+*.iml
+local.properties
+*.apk
+*.aab
+*.jks
+.DS_Store
+# Captures may contain operationally sensitive radar data; never commit originals.
+**/*Record*.csv
+**/*capture*.bin
+**/*.meta.json
