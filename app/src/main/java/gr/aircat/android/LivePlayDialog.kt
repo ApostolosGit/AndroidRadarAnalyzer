@@ -143,7 +143,7 @@ class LivePlayDialog(
         root.addView(label(if (screen == 0) "Live Radar Display · SYNC2WIFI" else "Radar Serial Line Monitor · SYNC2WIFI"))
         status = label(networkMessage).apply { textSize = 13f }
         root.addView(status)
-        connectButton = button("Σύνδεση SYNC") {
+        connectButton = button("Σύνδεση") {
             if (connecting || session?.snapshot?.running == true) disconnect() else connect(false)
         }
         recordButton = button("Record") { recordTapped() }.apply { isEnabled = false }
@@ -159,6 +159,7 @@ class LivePlayDialog(
 
         radar = RadarView(owner).apply {
             state = replay
+            liveTargetsOnly = true
             onTrackTap = inspectTrack
             val s = settings()
             filter = s.filter
@@ -173,7 +174,6 @@ class LivePlayDialog(
             orientation = LinearLayout.VERTICAL
             addView(button("+") { radar.zoom *= 1.25f }, LinearLayout.LayoutParams(dp(54), dp(44)))
             addView(button("−") { radar.zoom /= 1.25f }, LinearLayout.LayoutParams(dp(54), dp(44)))
-            addView(button("Reset") { radar.resetViewport() }, LinearLayout.LayoutParams(dp(69), dp(44)))
         }
         radarPanel.addView(zoom, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
         monitor = label("Αναμονή AIRCAT500 UDP δεδομένων...").apply { setTextIsSelectable(true) }
@@ -392,7 +392,7 @@ class LivePlayDialog(
             val linked = snap?.running == true && snap.lastAckAgoMs != null
             val active = connecting || snap?.running == true
             if(linked){connecting=false;failureMessage="";retryCount=0}
-            connectButton.text = if (active) "Διακοπή Σύνδεσης" else "Σύνδεση SYNC"
+            connectButton.text = if (active) "Διακοπή" else "Σύνδεση"
             status.visibility = if(linked) View.GONE else View.VISIBLE
             troubleshooting.visibility = if(linked || failureMessage.isEmpty()) View.GONE else View.VISIBLE
             val spinner=charArrayOf('|','/','—','\\')[(SystemClock.elapsedRealtime()/150%4).toInt()]
@@ -468,12 +468,16 @@ class LivePlayDialog(
 
     private fun radarSummary(s: WifiSessionSnapshot): CharSequence {
         val b = s.bsc
-        val text = "packet #" + (lastPacket?.frameNo ?: 0) + " · tracks " + replay.tracksBySector.values.sumOf { it.size } +
-            " · NORTH " + b.north + " · Sector " + (replay.sector ?: "—") +
-            "\nsector missing: " + (b.missingClean + b.missingUncertain) + " · scan missed: " + s.timing.missed +
-            " · north jitter: " + s.timing.jitter +
-            "\nCRC FAIL: " + b.crcErrors + " · Framing: " + b.framingErrors + " · UDP lost: " + s.transport.lost
-        return colored(text, listOf("sector missing", "scan missed", "north jitter", "CRC FAIL", "Framing", "UDP lost"))
+        val sector = replay.sector?.let { "%02X".format(it) } ?: "—"
+        val text = buildString {
+            append("packet #${lastPacket?.frameNo ?: 0} · Sector $sector · NORTH ${b.north}")
+            append("\nsector miss: ${b.missingClean} · scan miss: ${s.timing.missed} · north jitter: ${s.timing.jitter}")
+            val faults = listOf("CRC FAIL" to b.crcErrors, "Framing" to b.framingErrors,
+                "UDP lost" to s.transport.lost, "Uncertain" to b.missingUncertain)
+                .filter { it.second > 0 }
+            if (faults.isNotEmpty()) append("\n" + faults.joinToString(" · ") { "${it.first}: ${it.second}" })
+        }
+        return colored(text, listOf("sector miss", "scan miss", "north jitter", "CRC FAIL", "Framing", "UDP lost", "Uncertain"))
     }
 
     override fun dismiss() {

@@ -59,6 +59,11 @@ for path, expected in BASELINE.items():
         data = normalize_main(file.read_text(encoding='utf-8')).encode('utf-8')
     elif path == OLD_GRADLE:
         data = normalize_gradle(file.read_text(encoding='utf-8')).encode('utf-8')
+    elif path == 'app/src/main/java/gr/aircat/android/RadarView.kt':
+        src = file.read_text(encoding='utf-8')
+        src = src.replace("    // Live-only footer; offline replay retains the complete original footer.\n    var liveTargetsOnly = false\n        set(value) { field = value; invalidate() }\n", '')
+        src = src.replace("        canvas.drawText(if (liveTargetsOnly) \"${tracks.size} targets\" else \"${tracks.size} targets  •  Scan ${current.cycle}  •  Sector ${current.sector?.toString(16)?.uppercase()?.padStart(2,'0') ?: \"--\"}  •  Range %.1f NM\".format(visibleRangeNm),", "        canvas.drawText(\"${tracks.size} targets  •  Scan ${current.cycle}  •  Sector ${current.sector?.toString(16)?.uppercase()?.padStart(2,'0') ?: \"--\"}  •  Range %.1f NM\".format(visibleRangeNm),")
+        data = src.encode('utf-8')
     elif path == OLD_MANIFEST:
         data = normalize_manifest(file.read_text(encoding='utf-8')).encode('utf-8')
     else:
@@ -77,7 +82,9 @@ dialog = (ROOT / 'app/src/main/java/gr/aircat/android/LivePlayDialog.kt').read_t
 assert '.setItems(arrayOf("Αρχείο", "SYNC2WIFI"))' in main
 assert 'if (source == 0) chooseFile() else chooseLivePlayScreen()' in main
 assert '.setItems(arrayOf("Live Radar Display", "Radar Serial Line Monitor"))' in main
-assert 'button("Σύνδεση SYNC")' in dialog
+assert 'button("Σύνδεση")' in dialog
+assert 'button("Reset")' not in dialog
+assert 'liveTargetsOnly = true' in dialog
 assert 'button("Record")' in dialog
 assert 'Εμφάνιση κωδικού / PIN' in dialog
 assert 'if (!attempted)' in dialog

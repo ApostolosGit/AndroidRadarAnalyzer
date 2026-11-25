@@ -25,6 +25,9 @@ class RadarView(context: Context) : View(context) {
     // All 5-NM rings, configurable outermost value (5–500 NM).
     var maxRingNm = 220
         set(value) { field = (value.coerceIn(5,500) / 5) * 5; invalidate() }
+    // Live-only footer; offline replay retains the complete original footer.
+    var liveTargetsOnly = false
+        set(value) { field = value; invalidate() }
     var state: RadarReplayState? = null
         set(value) { field = value; invalidate() }
     var filter: RadarFilter = RadarFilter()
@@ -270,7 +273,7 @@ class RadarView(context: Context) : View(context) {
         paint.style = Paint.Style.FILL
         paint.color = foreground
         paint.textSize = sp(uiFontSp)
-        canvas.drawText("${tracks.size} targets  •  Scan ${current.cycle}  •  Sector ${current.sector?.toString(16)?.uppercase()?.padStart(2,'0') ?: "--"}  •  Range %.1f NM".format(visibleRangeNm),
+        canvas.drawText(if (liveTargetsOnly) "${tracks.size} targets" else "${tracks.size} targets  •  Scan ${current.cycle}  •  Sector ${current.sector?.toString(16)?.uppercase()?.padStart(2,'0') ?: "--"}  •  Range %.1f NM".format(visibleRangeNm),
             dp(8f), height-dp(12f), paint)
     }
 
