@@ -14,6 +14,7 @@ BASELINE = json.loads(r'''{".github/workflows/android.yml":"01a5e89d53760cca68d0
 ADDITIONS = set(json.loads(r'''["app/src/main/java/gr/aircat/android/AircatWifiProtocol.kt","app/src/main/java/gr/aircat/android/AircatBscStream.kt","app/src/main/java/gr/aircat/android/AircatWifiSession.kt","app/src/main/java/gr/aircat/android/WifiNetworkConnection.kt","app/src/main/java/gr/aircat/android/LivePlayDialog.kt","app/src/test/java/gr/aircat/android/LivePlayProtocolTest.kt",".github/workflows/liveplay-only.yml","tools/verify_v22_liveplay_only.py","LIVEPLAY_PORT_GR.md"]'''))
 ADDITIONS.update(["app/src/main/java/gr/aircat/android/SyncCredentials.kt","app/src/main/java/gr/aircat/android/LiveCsv.kt","app/src/test/java/gr/aircat/android/LiveV4Test.kt"])
 ADDITIONS.update(["app/src/main/java/gr/aircat/android/TcpLabProtocol.kt","app/src/main/java/gr/aircat/android/AircatTcpLabSession.kt","app/src/test/java/gr/aircat/android/TcpLabTest.kt"])
+ADDITIONS.update(["app/src/main/java/gr/aircat/android/LabCsvAudit.kt","app/src/test/java/gr/aircat/android/LabCsvAuditTest.kt"])
 OLD_MAIN = 'app/src/main/java/gr/aircat/android/MainActivity.kt'
 OLD_GRADLE = 'app/build.gradle.kts'
 OLD_MANIFEST = 'app/src/main/AndroidManifest.xml'
@@ -22,9 +23,10 @@ def blob_sha(source: bytes) -> str:
     return hashlib.sha1(b'blob ' + str(len(source)).encode() + b'\0' + source).hexdigest()
 
 def normalize_main(src: str) -> str:
+    src = src.replace("                        // LAB_AUDIT_ROUTE_BEGIN\n                        val lab = loadInput().bufferedReader(Charsets.UTF_8).use { reader ->\n                            reader.mark(65536)\n                            val header = reader.readLine()\n                            reader.reset()\n                            if (header != null && LabCsvAudit.isLabHeader(header)) LabCsvAudit.read(reader) else null\n                        }\n                        if (lab != null) {\n                            val report = lab.report()\n                            runOnUiThread {\n                                hideLoadProgress()\n                                info.text = \"TCP LAB CSV — offline audit (previous replay unchanged)\"\n                                AlertDialog.Builder(this).setTitle(\"AIRCAT500 — LAB CSV Audit\")\n                                    .setMessage(report).setPositiveButton(\"OK\", null).show()\n                            }\n                            return@execute\n                        }\n                        // LAB_AUDIT_ROUTE_END\n", '')
     src = src.replace("        if (requestCode == WifiNetworkConnection.WIFI_PANEL_REQUEST) {\n            livePlayDialog?.wifiPanelResult()\n            return\n        }\n", "")
     src = src.replace("        if (requestCode == 2304) {\n            livePlayDialog?.recordDestination(if (resultCode == RESULT_OK) data?.data else null)\n            return\n        }\n", "")
-    src = src.replace("AIRCAT500 Mobile  v5.0 LAB", "AIRCAT500 Mobile  v2.2")
+    src = src.replace("AIRCAT500 Mobile  v5.01 LAB", "AIRCAT500 Mobile  v2.2")
     src = src.replace("Android offline radar analysis & replay + LivePlay\\n", "Android offline radar analysis & replay\\n")
     src = src.replace("Desktop reference: Python Analyzer v9.16 (offline), v40.0 (LivePlay)\\n", "Desktop reference: Python Analyzer v9.16\\n")
     src = src.replace("LivePlay: SYNC2WIFI (Live Radar Display / Radar Serial Line Monitoring). USB live is not included.\\n", "SYNC2USB live Wi-Fi/USB: not included in this build.\\n")
@@ -44,14 +46,14 @@ def normalize_main(src: str) -> str:
 def normalize_gradle(src: str) -> str:
     return (src.replace('applicationId = "gr.aircat.androidradaranalyzer.tcplab"',
                         'applicationId = "gr.aircat.androidradaranalyzer"')
-               .replace('versionCode = 13', 'versionCode = 8')
-               .replace('versionName = "5.0"', 'versionName = "2.2"'))
+               .replace('versionCode = 14', 'versionCode = 8')
+               .replace('versionName = "5.01"', 'versionName = "2.2"'))
 
 def normalize_manifest(src: str) -> str:
     src, count = re.subn(r'    <!-- LivePlay adds only Android local Wi-Fi association and UDP transport. -->.*?(?=    <application )',
                          '', src, count=1, flags=re.S)
     assert count == 1, 'Live-only permission declarations missing or changed'
-    return src.replace('android:label="AIRCAT500 Mobile v5.0 LAB"', 'android:label="AIRCAT500 Mobile"')
+    return src.replace('android:label="AIRCAT500 Mobile v5.01 LAB"', 'android:label="AIRCAT500 Mobile"')
 
 for path, expected in BASELINE.items():
     file = ROOT / path

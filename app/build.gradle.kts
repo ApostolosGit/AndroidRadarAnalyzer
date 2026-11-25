@@ -11,8 +11,8 @@ android {
         applicationId = "gr.aircat.androidradaranalyzer.tcplab"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "5.0"
+        versionCode = 14
+        versionName = "5.01"
     }
 
     compileOptions {

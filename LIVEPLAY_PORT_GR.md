@@ -46,3 +46,7 @@ Monitor: οι μετρητές προβλημάτων με κόκκινο. UDP d
 ## v5.0 LAB candidate — 25/11/2026
 
 Added TCP-only synthetic lab session (AC5T), source timestamps, explicit CSV GAP rows, separate package so UDP apps stay installed, and unit tests for segmented TCP records and timing reset. The SSID is SYNC-LAB. Existing UDP transport is not selectable in this build; old UDP files remain for legacy regression tests. The old offline CSV analyzer refuses the new event format rather than counting gaps as source loss; use the companion Python LAB audit for these CSV files. This is a test prototype, not the full real-capture port. Hardware and real-source capture integration remain unverified.
+
+## v5.01 LAB — offline continuity audit
+
+Προτροπή χρήστη: επανέλεγχος και ολοκλήρωση εκκρεμοτήτων. Προστέθηκε ξεχωριστή εισαγωγή LAB CSV στο Android, με ρητή διάκριση GAP, αμφίβολης περιστροφής, οπισθοδρόμησης χρόνου, μη έγκυρης γραμμής και παρατηρούμενων sector miss. Ο παλαιός analyzer δεν διαβάζει το νέο event format. Ο έλεγχος αφορά μόνο καταγεγραμμένα συνθετικά LAB δεδομένα. Το CSV v5.0 παραλείπει heartbeats, επομένως μη επισημασμένη διαγραφή γραμμής δεν εντοπίζεται πάντα. Δεν προκύπτει διάγνωση φυσικής βλάβης RADAR. Οι εκδόσεις v2.2, v4.x και v5.0 LAB διατηρούνται. Απαιτείται νέα εγγραφή μετά από επανασύνδεση. Δεν αποτελεί επιχειρησιακή έκδοση.

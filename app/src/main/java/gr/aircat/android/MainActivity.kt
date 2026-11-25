@@ -148,7 +148,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v5.0 LAB", 16f))
+        root.addView(title("AIRCAT500 Mobile  v5.01 LAB", 16f))
         val open = button("Άνοιγμα", 11f) { chooseOpenSource() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 10f) { showReport() }
@@ -429,6 +429,24 @@ class MainActivity : Activity() {
                         sourceNote = "UDP: ${result.udpPackets} / ${result.inspectedPackets} frames"
                     }
                     else -> {
+                        // LAB_AUDIT_ROUTE_BEGIN
+                        val lab = loadInput().bufferedReader(Charsets.UTF_8).use { reader ->
+                            reader.mark(65536)
+                            val header = reader.readLine()
+                            reader.reset()
+                            if (header != null && LabCsvAudit.isLabHeader(header)) LabCsvAudit.read(reader) else null
+                        }
+                        if (lab != null) {
+                            val report = lab.report()
+                            runOnUiThread {
+                                hideLoadProgress()
+                                info.text = "TCP LAB CSV — offline audit (previous replay unchanged)"
+                                AlertDialog.Builder(this).setTitle("AIRCAT500 — LAB CSV Audit")
+                                    .setMessage(report).setPositiveButton("OK", null).show()
+                            }
+                            return@execute
+                        }
+                        // LAB_AUDIT_ROUTE_END
                         loaded = loadInput().bufferedReader(Charsets.UTF_8).use {
                             AircatCsv.read(it, filename)
                         } ?: error("Το CSV δεν είναι διαθέσιμο")
