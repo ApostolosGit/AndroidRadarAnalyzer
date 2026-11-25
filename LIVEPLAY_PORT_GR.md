@@ -42,3 +42,7 @@ Monitor: οι μετρητές προβλημάτων με κόκκινο. UDP d
 - Στην τελική έκδοση UDP lost αντικαθίσταται από μετρητή TCP gap/ασυνέχειας, όχι από αριθμό TCP retransmissions. Οι τελευταίες δεν αποτελούν απώλειες του byte stream.
 
 Κατάσταση: προετοιμασία UI και καταγραφή απαιτήσεων. Δεν έχει μεταγλωττιστεί ή ελεγχθεί σε συσκευή, δεν διανέμεται APK 5.0 από αυτό το branch.
+
+## v5.0 LAB candidate — 25/11/2026
+
+Added TCP-only synthetic lab session (AC5T), source timestamps, explicit CSV GAP rows, separate package so UDP apps stay installed, and unit tests for segmented TCP records and timing reset. The SSID is SYNC-LAB. Existing UDP transport is not selectable in this build; old UDP files remain for legacy regression tests. The old offline CSV analyzer refuses the new event format rather than counting gaps as source loss; use the companion Python LAB audit for these CSV files. This is a test prototype, not the full real-capture port. Hardware and real-source capture integration remain unverified.

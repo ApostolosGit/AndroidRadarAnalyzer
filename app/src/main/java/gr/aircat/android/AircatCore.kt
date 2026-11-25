@@ -206,6 +206,7 @@ object AircatCsv {
         val heading = input.readLine()?.removePrefix("\uFEFF")
             ?: throw IllegalArgumentException("Το CSV είναι κενό")
         val keys = columns(heading).map { it.trim().lowercase() }
+        require("capture_event" !in keys) { "TCP LAB CSV: use the v50.0 Python continuity-aware audit; legacy offline analysis is disabled for this format." }
         val hexIndex = keys.indexOf("udp_payload_hex")
         if (hexIndex == -1) throw IllegalArgumentException("Δεν βρέθηκε η στήλη udp_payload_hex")
         fun index(key: String) = keys.indexOf(key)

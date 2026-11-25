@@ -52,8 +52,8 @@ class LivePlayDialog(
 ) : Dialog(owner) {
     private val ui = Handler(Looper.getMainLooper())
     private val replay = RadarReplayState()
-    private var session: AircatWifiSession? = null
-    private var networkMessage = "Αναμονή σύνδεσης SYNC..."
+    private var session: AircatTcpLabSession? = null
+    private var networkMessage = "Αναμονή σύνδεσης SYNC-LAB..."
     private var pin = "1234"
     private var closed = false
     private var screen = initialScreen.coerceIn(0, 1)
@@ -73,8 +73,8 @@ class LivePlayDialog(
     private val credentials = SyncCredentials(owner)
     private var connecting = false
     private var attempted = false
-    private var recorder: WifiCsvRecorder? = null
-    private var recordPending: AircatWifiSession? = null
+    private var recorder: LabRecorder? = null
+    private var recordPending: AircatTcpLabSession? = null
     private var recordMessage = ""
     private var login: SyncLogin? = null
     private var retryCount = 0
@@ -98,8 +98,9 @@ class LivePlayDialog(
                 lastPacket = null
                 lastNorthEpoch = null
                 sectorEpoch = 0.0
+        lastNorthEpoch = null
                 radar.sweepAzimuthDegrees = Float.NaN
-                session = AircatWifiSession(bindSocket = { network.bindSocket(it) }, pin = pin)
+                session = AircatTcpLabSession(bindSocket = { network.bindSocket(it) }, pin = pin)
                     .also { it.start() }
             }
         },
@@ -176,7 +177,7 @@ class LivePlayDialog(
             addView(button("−") { radar.zoom /= 1.25f }, LinearLayout.LayoutParams(dp(54), dp(44)))
         }
         radarPanel.addView(zoom, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
-        monitor = label("Αναμονή AIRCAT500 UDP δεδομένων...").apply { setTextIsSelectable(true) }
+        monitor = label("Αναμονή AIRCAT500 TCP LAB δεδομένων...").apply { setTextIsSelectable(true) }
         monitorPanel = ScrollView(owner).apply {
             isFillViewport = true
             setBackgroundColor(Color.rgb(249, 252, 254))
@@ -227,10 +228,10 @@ class LivePlayDialog(
         // A dropped link or failed HELLO gets one clean, delayed retry. Do not
         // loop on denied permissions, a disabled radio or association timeout.
         if(retryCount==0 && login!=null && connection.radioEnabled() &&
-            (reason.contains("Χάθηκε") || reason.contains("HELLO sent="))){
+            (reason.contains("Χάθηκε") || reason.contains("TCP LAB"))){
             retryCount++
             connecting=true
-            networkMessage="Επανασύνδεση σε 8s μετά την αποδέσμευση του SYNC..."
+            networkMessage="Επανασύνδεση σε 8s μετά την αποδέσμευση του SYNC-LAB..."
             ui.removeCallbacks(retry)
             ui.postDelayed(retry,8000)
         }
@@ -248,7 +249,7 @@ class LivePlayDialog(
         login = value
         pin = value.pin
         connecting = true
-        networkMessage = "Αναμονή σύνδεσης SYNC..."
+        networkMessage = "Αναμονή σύνδεσης SYNC-LAB..."
         connection.connect(value.password,forceNew=retrying)
     }
 
@@ -257,9 +258,9 @@ class LivePlayDialog(
             orientation = LinearLayout.VERTICAL
             setPadding(dp(15), dp(7), dp(15), dp(7))
         }
-        box.addView(label("Wi-Fi SYNC · χωρίς Internet"))
+        box.addView(label("Wi-Fi SYNC-LAB · χωρίς Internet"))
         val password = EditText(owner).apply {
-            hint = "Κωδικός Wi-Fi SYNC"
+            hint = "Κωδικός Wi-Fi SYNC-LAB"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             setText(saved?.password ?: "")
             textSize = settings().uiSp
@@ -399,7 +400,7 @@ class LivePlayDialog(
             status.text=when {
                 linked -> ""
                 active -> "$spinner "+(snap?.message ?: networkMessage)
-                else -> if(failureMessage.isEmpty())networkMessage else "Αποτυχία σύνδεσης SYNC"
+                else -> if(failureMessage.isEmpty())networkMessage else "Αποτυχία σύνδεσης SYNC-LAB"
             }
             troubleshooting.text=failureMessage
             val rec = recorder
@@ -415,19 +416,19 @@ class LivePlayDialog(
             recordStatus.text=recordMessage
             recordStatus.visibility=if(recordMessage.isEmpty())View.GONE else View.VISIBLE
             if(snap==null && screen==0)radarCounters.text=""
-            if(snap==null && screen==1)monitor.text="Αναμονή AIRCAT500 UDP δεδομένων..."
+            if(snap==null && screen==1)monitor.text="Αναμονή AIRCAT500 TCP LAB δεδομένων..."
             ui.postDelayed(this, 100)
         }
     }
 
-    private fun monitorText(s: WifiSessionSnapshot, current: AircatWifiSession): CharSequence {
+    private fun monitorText(s: WifiSessionSnapshot, current: AircatTcpLabSession): CharSequence {
         val transport = s.transport
         val bsc = s.bsc
         val plain = buildString {
             appendLine("AIRCAT500 — Radar Serial Line Monitor")
             appendLine("CLOCK: ${transport.clockHz} Hz")
             appendLine()
-            appendLine("BSC bytes: ${bsc.bytes} · SYNC: ${bsc.sync}")
+            appendLine("BSC bytes: ${bsc.bytes} · SYNC-LAB: ${bsc.sync}")
             appendLine("Frames: ${bsc.framed} · CRC OK: ${bsc.valid}")
             appendLine("NORTH: ${bsc.north} · Sectors: ${bsc.sectors} · Extensions: ${bsc.extensions}")
             appendLine("CRC FAIL: ${bsc.crcErrors} · Framing: ${bsc.framingErrors}")
@@ -436,10 +437,10 @@ class LivePlayDialog(
             appendLine("Duplicates: ${bsc.duplicates} · Order errors: ${bsc.orderErrors}")
             appendLine("Current sectors: ${bsc.currentUnique ?: "—"} / 32")
             appendLine()
-            appendLine("UDP received: ${transport.received} · Lost: ${transport.lost}")
-            appendLine("Scan missed: "+s.timing.missed+" · North jitter: "+s.timing.jitter+" (arrival timing)")
-            appendLine("UDP duplicates: ${transport.duplicates} · Invalid: ${transport.invalid}")
-            appendLine("UDP CRC32 FAIL: ${transport.badCrc32}")
+            appendLine("TCP records: ${transport.received} · Lost: ${transport.lost}")
+            appendLine("Scan missed: "+s.timing.missed+" · North jitter: "+s.timing.jitter+" (source timing · LAB)")
+            appendLine("TCP duplicates: ${transport.duplicates} · Invalid: ${transport.invalid}")
+            appendLine("TCP CRC32 FAIL: ${transport.badCrc32}")
             appendLine("Firmware overflow: ${transport.firmwareOverflow} · Since connect: +${transport.overflowSinceConnect}")
             appendLine("Link resets: ${transport.linkResets} · Display dropped: ${current.frames.displayDropped}")
             appendLine()
@@ -450,7 +451,7 @@ class LivePlayDialog(
             if (bsc.lastError.isNotBlank()) appendLine("\nΤελευταίο σφάλμα: ${bsc.lastError}")
         }
         return colored(plain, listOf("CRC FAIL", "Framing", "Missing clean", "Uncertain", "Duplicates",
-            "Order errors", "Lost", "Invalid", "UDP CRC32 FAIL", "Firmware overflow", "Since connect",
+            "Order errors", "Lost", "Invalid", "TCP CRC32 FAIL", "Firmware overflow", "Since connect",
             "Link resets", "Display dropped", "Scan missed", "North jitter"))
     }
 
@@ -473,11 +474,11 @@ class LivePlayDialog(
             append("packet #${lastPacket?.frameNo ?: 0} · Sector $sector · NORTH ${b.north}")
             append("\nsector miss: ${b.missingClean} · scan miss: ${s.timing.missed} · north jitter: ${s.timing.jitter}")
             val faults = listOf("CRC FAIL" to b.crcErrors, "Framing" to b.framingErrors,
-                "UDP lost" to s.transport.lost, "Uncertain" to b.missingUncertain)
+                "TCP gap" to s.transport.lost, "Uncertain" to b.missingUncertain)
                 .filter { it.second > 0 }
             if (faults.isNotEmpty()) append("\n" + faults.joinToString(" · ") { "${it.first}: ${it.second}" })
         }
-        return colored(text, listOf("sector miss", "scan miss", "north jitter", "CRC FAIL", "Framing", "UDP lost", "Uncertain"))
+        return colored(text, listOf("sector miss", "scan miss", "north jitter", "CRC FAIL", "Framing", "TCP gap", "Uncertain"))
     }
 
     override fun dismiss() {

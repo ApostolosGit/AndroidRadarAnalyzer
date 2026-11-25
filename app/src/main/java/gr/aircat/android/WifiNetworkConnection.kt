@@ -124,11 +124,11 @@ class WifiNetworkConnection(
             networks().firstOrNull { hasEspAddress(cm.getLinkProperties(it)) }
         if(existing!=null){useCurrent(existing);return}
         if(Build.VERSION.SDK_INT<29){
-            fail("Android 8/9: συνδέσου χειροκίνητα στο SYNC από τις ρυθμίσεις Wi-Fi και ξαναπάτησε Σύνδεση.");return
+            fail("Android 8/9: συνδέσου χειροκίνητα στο SYNC-LAB από τις ρυθμίσεις Wi-Fi και ξαναπάτησε Σύνδεση.");return
         }
         if(!hasPermission()){
             pendingPassword=password
-            progress("PERMISSION","Απαιτείται άδεια Android για σύνδεση στο SYNC.")
+            progress("PERMISSION","Απαιτείται άδεια Android για σύνδεση στο SYNC-LAB.")
             try { activity.requestPermissions(arrayOf(permission()),PERMISSION_REQUEST) }
             catch(ex: Exception){fail("Αδυναμία αιτήματος άδειας Wi-Fi: ${ex.javaClass.simpleName}")}
             return
@@ -154,12 +154,12 @@ class WifiNetworkConnection(
     }
     private fun lostNetwork(network: Network,token: Int){
         if(token!=generation || current!=network)return
-        fail("Χάθηκε το δίκτυο SYNC (Android onLost). Πιθανές αιτίες: Wi-Fi OFF, διακοπή ESP32 ή ασθενές σήμα.")
+        fail("Χάθηκε το δίκτυο SYNC-LAB (Android onLost). Πιθανές αιτίες: Wi-Fi OFF, διακοπή ESP32 ή ασθενές σήμα.")
     }
     @android.annotation.TargetApi(29)
     private fun requestAutomatic(password: String){
         val token=generation
-        progress("ASSOCIATION","Αναμονή σύνδεσης SYNC από το Android...")
+        progress("ASSOCIATION","Αναμονή σύνδεσης SYNC-LAB από το Android...")
         val cb=object: ConnectivityManager.NetworkCallback(){
             override fun onAvailable(network: Network){
                 if(token!=generation || current==network)return
@@ -170,22 +170,22 @@ class WifiNetworkConnection(
             }
             override fun onLinkPropertiesChanged(network: Network,properties: LinkProperties){
                 if(token==generation && network==current){
-                    if(delivered==network && !hasEspAddress(properties))fail("Χάθηκε η διεύθυνση DHCP του SYNC.")
+                    if(delivered==network && !hasEspAddress(properties))fail("Χάθηκε η διεύθυνση DHCP του SYNC-LAB.")
                     else deliver(network,properties)
                 }
             }
             override fun onLost(network: Network){lostNetwork(network,token)}
             override fun onUnavailable(){
-                if(token==generation)fail("Android timeout πριν από το HELLO/PIN. Πιθανές αιτίες: SYNC εκτός εμβέλειας, λανθασμένος κωδικός, μη αποδοχή αιτήματος ή άλλη συνδεδεμένη συσκευή (ESP32 max 1).")
+                if(token==generation)fail("Android timeout πριν από το HELLO/PIN. Πιθανές αιτίες: SYNC-LAB εκτός εμβέλειας, λανθασμένος κωδικός, μη αποδοχή αιτήματος ή άλλη συνδεδεμένη συσκευή (ESP32 max 1).")
             }
         }
         callback=cb
         try {
-            val spec=WifiNetworkSpecifier.Builder().setSsid("SYNC").setWpa2Passphrase(password).build()
+            val spec=WifiNetworkSpecifier.Builder().setSsid("SYNC-LAB").setWpa2Passphrase(password).build()
             val request=NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                 .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).setNetworkSpecifier(spec).build()
             cm.requestNetwork(request,cb,handler,30000)
-            timeout(token,35000){fail("Δεν παραλήφθηκε Android onAvailable. Πιθανή αποτυχία συσχέτισης AP/κωδικού ή εξάντληση θέσεων SYNC (max 1). PIN δεν ελέγχθηκε.")}
+            timeout(token,35000){fail("Δεν παραλήφθηκε Android onAvailable. Πιθανή αποτυχία συσχέτισης AP/κωδικού ή εξάντληση θέσεων SYNC-LAB (max 1). PIN δεν ελέγχθηκε.")}
         } catch(ex: Exception){fail("Αδυναμία αιτήματος Android Wi-Fi: ${ex.javaClass.simpleName}. Έλεγξε άδειες/ρυθμίσεις.")}
     }
     private fun useCurrent(network: Network){
@@ -195,7 +195,7 @@ class WifiNetworkConnection(
         val cb=object: ConnectivityManager.NetworkCallback(){
             override fun onLinkPropertiesChanged(n: Network,properties: LinkProperties){
                 if(token==generation && n==current){
-                    if(delivered==n && !hasEspAddress(properties))fail("Χάθηκε η διεύθυνση DHCP του SYNC.")
+                    if(delivered==n && !hasEspAddress(properties))fail("Χάθηκε η διεύθυνση DHCP του SYNC-LAB.")
                     else deliver(n,properties)
                 }
             }

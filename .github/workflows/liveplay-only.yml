@@ -1,8 +1,8 @@
-name: AIRCAT500 Mobile v4.01 LivePlay APK (v2.2 preserved)
+name: AIRCAT500 Mobile v5.0-lab LivePlay APK (v2.2 preserved)
 
 on:
   push:
-    branches: [feature/mobile-v4-01-sync2wifi]
+    branches: [feature/mobile-v5-0-tcp-prep]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: liveplay-v401-${{ github.ref }}
+  group: liveplay-v50lab-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -36,27 +36,27 @@ jobs:
         run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon
       - name: Package LivePlay APK (does not overwrite v2.2)
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk AIRCAT500_V4.01_LivePlay_parallel.apk
-          sha256sum AIRCAT500_V4.01_LivePlay_parallel.apk > AIRCAT500_V4.01_LivePlay_SHA256SUMS.txt
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging AIRCAT500_V4.01_LivePlay_parallel.apk | head -n 4
-          grep -q "name='gr.aircat.androidradaranalyzer.liveplay'" <("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging AIRCAT500_V4.01_LivePlay_parallel.apk)
-          grep -q "versionName='4.01'" <("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging AIRCAT500_V4.01_LivePlay_parallel.apk)
+          cp app/build/outputs/apk/debug/app-debug.apk AIRCAT500_V5.0_LAB_LivePlay_parallel.apk
+          sha256sum AIRCAT500_V5.0_LAB_LivePlay_parallel.apk > AIRCAT500_V5.0_LAB_LivePlay_SHA256SUMS.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging AIRCAT500_V5.0_LAB_LivePlay_parallel.apk | head -n 4
+          grep -q "name='gr.aircat.androidradaranalyzer.tcplab'" <("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging AIRCAT500_V5.0_LAB_LivePlay_parallel.apk)
+          grep -q "versionName='5.0'" <("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging AIRCAT500_V5.0_LAB_LivePlay_parallel.apk)
         shell: bash
       - uses: actions/upload-artifact@v4
         with:
-          name: AIRCAT500_V4.01_LivePlay_parallel_APK
+          name: AIRCAT500_V5.0_LAB_LivePlay_parallel_APK
           path: |
-            AIRCAT500_V4.01_LivePlay_parallel.apk
-            AIRCAT500_V4.01_LivePlay_SHA256SUMS.txt
+            AIRCAT500_V5.0_LAB_LivePlay_parallel.apk
+            AIRCAT500_V5.0_LAB_LivePlay_SHA256SUMS.txt
       - name: Package full Android Studio project for LivePlay
-        run: zip -qr AIRCAT500_V4.01_LivePlay_AndroidStudio.zip app build.gradle.kts settings.gradle.kts gradle.properties gradle .gitignore LIVEPLAY_PORT_GR.md tools
+        run: zip -qr AIRCAT500_V5.0_LAB_LivePlay_AndroidStudio.zip app build.gradle.kts settings.gradle.kts gradle.properties gradle .gitignore LIVEPLAY_PORT_GR.md tools
       - uses: actions/upload-artifact@v4
         with:
-          name: AIRCAT500_V4.01_LivePlay_AndroidStudio
-          path: AIRCAT500_V4.01_LivePlay_AndroidStudio.zip
+          name: AIRCAT500_V5.0_LAB_LivePlay_AndroidStudio
+          path: AIRCAT500_V5.0_LAB_LivePlay_AndroidStudio.zip
 
-  archive-v401:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/mobile-v4-01-sync2wifi'
+  archive-v50lab:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/mobile-v5-0-tcp-prep'
     needs: android-liveplay
     runs-on: ubuntu-latest
     permissions:
@@ -69,25 +69,25 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: AIRCAT500_V4.01_LivePlay_parallel_APK
-          path: /tmp/aircat-v401-apk
-      - name: Archive verified v4.01 source and APK separately
+          name: AIRCAT500_V5.0_LAB_LivePlay_parallel_APK
+          path: /tmp/aircat-v50lab-apk
+      - name: Archive verified v5.0-lab source and APK separately
         shell: bash
         env:
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          dest=versions/v4.01
-          if [ -e "$dest/apk/AIRCAT500_V4.01_LivePlay_parallel_APK.zip" ]; then echo "Archive already exists; refusing overwrite"; exit 1; fi
+          dest=versions/v5.0-lab
+          if [ -e "$dest/apk/AIRCAT500_V5.0_LAB_LivePlay_parallel_APK.zip" ]; then echo "Archive already exists; refusing overwrite"; exit 1; fi
           mkdir -p "$dest/source" "$dest/apk"
           git fetch origin "$SOURCE_SHA"
           git archive "$SOURCE_SHA" | tar -x -C "$dest/source"
-          cp /tmp/aircat-v401-apk/* "$dest/apk/"
-          (cd "$dest/apk"; sha256sum --check AIRCAT500_V4.01_LivePlay_SHA256SUMS.txt; zip -q AIRCAT500_V4.01_LivePlay_parallel_APK.zip AIRCAT500_V4.01_LivePlay_parallel.apk AIRCAT500_V4.01_LivePlay_SHA256SUMS.txt)
-          printf '# AIRCAT500 Mobile v4.01\n\nSource commit: %s\n\nVerified debug APK and checksum in apk/. Physical ESP32 reconnection still requires device testing. Previous versions unchanged.\n' "$SOURCE_SHA" > "$dest/README.md"
+          cp /tmp/aircat-v50lab-apk/* "$dest/apk/"
+          (cd "$dest/apk"; sha256sum --check AIRCAT500_V5.0_LAB_LivePlay_SHA256SUMS.txt; zip -q AIRCAT500_V5.0_LAB_LivePlay_parallel_APK.zip AIRCAT500_V5.0_LAB_LivePlay_parallel.apk AIRCAT500_V5.0_LAB_LivePlay_SHA256SUMS.txt)
+          printf '# AIRCAT500 Mobile v5.0-lab\n\nSource commit: %s\n\nVerified debug APK and checksum in apk/. Synthetic LAB prototype only; physical ESP32 and full analyzer integration not verified. Previous versions unchanged.\n' "$SOURCE_SHA" > "$dest/README.md"
           cp "$dest/source/LIVEPLAY_PORT_GR.md" "$dest/CHANGELOG_GR.md"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f "$dest"
-          git commit -m "Archive verified AIRCAT500 Mobile v4.01 in separate folder"
+          git commit -m "Archive verified AIRCAT500 Mobile v5.0-lab in separate folder"
           git push origin HEAD:main

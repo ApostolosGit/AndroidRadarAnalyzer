@@ -148,7 +148,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v4.01", 16f))
+        root.addView(title("AIRCAT500 Mobile  v5.0 LAB", 16f))
         val open = button("Άνοιγμα", 11f) { chooseOpenSource() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 10f) { showReport() }

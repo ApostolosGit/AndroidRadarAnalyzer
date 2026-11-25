@@ -35,6 +35,7 @@ internal class LiveNorthTiming {
     private var prev: Double?=null
     private var counts=LiveTimingSnapshot()
     fun snapshot()=counts
+    fun gap(){prev=null}
     fun add(time: Double) {
         val delta=prev?.let { time-it }
         prev=time

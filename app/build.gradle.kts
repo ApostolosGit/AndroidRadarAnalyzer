@@ -8,11 +8,11 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "gr.aircat.androidradaranalyzer.liveplay"
+        applicationId = "gr.aircat.androidradaranalyzer.tcplab"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "4.01"
+        versionCode = 13
+        versionName = "5.0"
     }
 
     compileOptions {
