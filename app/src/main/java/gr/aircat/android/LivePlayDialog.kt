@@ -82,6 +82,8 @@ class LivePlayDialog(
     private var recordStartedMs = 0L
     private lateinit var recordStatus: TextView
     private var appliedSettings: LivePlaySettings? = null
+    private val scalableLabels=ArrayList<TextView>()
+    private val scalableButtons=ArrayList<Button>()
     private val retry = Runnable {
         if (!closed && connecting) login?.let { begin(it, retrying=true) }
     }
@@ -108,12 +110,14 @@ class LivePlayDialog(
     private fun label(text: String) = TextView(owner).apply {
         this.text = text
         textSize = settings().uiSp
+        scalableLabels.add(this)
         setTextColor(Color.rgb(19, 57, 81))
         setPadding(dp(7), dp(4), dp(7), dp(4))
     }
     private fun button(text: String, action: () -> Unit) = Button(owner).apply {
         this.text = text
-        textSize = 12f
+        textSize = settings().uiSp.coerceIn(12f,16f)
+        scalableButtons.add(this)
         isAllCaps = false
         minWidth = 0
         minimumWidth = 0
@@ -210,6 +214,8 @@ class LivePlayDialog(
         radar.labelSizeSp=value.labelSp
         radar.uiFontSp=value.uiSp
         replay.trailDepth=value.trailDepth
+        scalableLabels.forEach { it.textSize=value.uiSp }
+        scalableButtons.forEach { it.textSize=value.uiSp.coerceIn(12f,16f) }
     }
 
     private fun handleFailure(reason: String) {

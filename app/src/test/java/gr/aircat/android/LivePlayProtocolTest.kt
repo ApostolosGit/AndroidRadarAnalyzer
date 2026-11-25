@@ -97,6 +97,39 @@ class LivePlayProtocolTest {
         assertEquals(8L, buffer.displayDropped)
     }
 
+    @Test fun closeAndReopenUdpPortAfterAckLoss() {
+        val loop = InetAddress.getByName("127.0.0.1")
+        val server = DatagramSocket(0, loop).apply { soTimeout = 4000 }
+        val port = DatagramSocket(0, loop).use { it.localPort }
+        val first = AircatWifiSession({}, "127.0.0.1", port, server.localPort,
+            handshakeTimeoutMs = 4000, ackTimeoutMs = 700)
+        val second = AircatWifiSession({}, "127.0.0.1", port, server.localPort,
+            handshakeTimeoutMs = 4000)
+        fun answer() {
+            val packet = DatagramPacket(ByteArray(100), 100)
+            server.receive(packet)
+            val ack = "AIRCAT_ACK_V1".toByteArray(Charsets.US_ASCII)
+            server.send(DatagramPacket(ack, ack.size, loop, packet.port))
+        }
+        try {
+            first.start()
+            answer()
+            val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(4)
+            while(first.snapshot.running && System.nanoTime() < until) Thread.sleep(20)
+            assertFalse(first.snapshot.running)
+            assertTrue(first.snapshot.message.contains("HELLO/ACK"))
+            first.close()
+            second.start()
+            answer()
+            val again = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+            while(second.snapshot.ackReceived == 0L && System.nanoTime() < again) Thread.sleep(20)
+            assertTrue(second.snapshot.running)
+            assertEquals(1L, second.snapshot.ackReceived)
+        } finally {
+            first.close(); second.close(); server.close()
+        }
+    }
+
     @Test fun localUdpHandshakeAndStreamingUseV40PortsAndPin() {
         val loop = InetAddress.getByName("127.0.0.1")
         val server = DatagramSocket(0, loop).apply { soTimeout = 3000 }
