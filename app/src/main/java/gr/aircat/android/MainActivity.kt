@@ -148,7 +148,7 @@ class MainActivity : Activity() {
         setContentView(root)
         root.requestApplyInsets()
 
-        root.addView(title("AIRCAT500 Mobile  v4.0", 16f))
+        root.addView(title("AIRCAT500 Mobile  v4.01", 16f))
         val open = button("Άνοιγμα", 11f) { chooseOpenSource() }
         val filter = button("Φίλτρα", 11f) { chooseFilters() }
         val export = button("Report", 10f) { showReport() }
@@ -315,8 +315,10 @@ class MainActivity : Activity() {
         if (livePlayDialog?.isShowing == true) return
         val dialog = LivePlayDialog(
             owner = this,
-            settings = { LivePlaySettings(currentFilter, maxRangeNm, maxRingNm, aircraftLabelSp, uiTextSp) },
+            settings = { LivePlaySettings(currentFilter, maxRangeNm, maxRingNm, aircraftLabelSp, uiTextSp, replay.trailDepth) },
             inspectTrack = { track -> showTrack(track) },
+            openFilters = { chooseFilters() },
+            openSettings = { showSettings() },
             initialScreen = screen
         )
         livePlayDialog = dialog
@@ -340,6 +342,10 @@ class MainActivity : Activity() {
     @Deprecated("Document picker compatibility on Android API 26+")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == WifiNetworkConnection.WIFI_PANEL_REQUEST) {
+            livePlayDialog?.wifiPanelResult()
+            return
+        }
         if (requestCode == 2304) {
             livePlayDialog?.recordDestination(if (resultCode == RESULT_OK) data?.data else null)
             return

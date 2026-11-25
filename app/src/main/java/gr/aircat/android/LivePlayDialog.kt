@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.net.Network
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.net.Uri
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -36,7 +37,8 @@ data class LivePlaySettings(
     val rangeNm: Float,
     val ringsNm: Int,
     val labelSp: Float,
-    val uiSp: Float
+    val uiSp: Float,
+    val trailDepth: Int
 )
 
 /** Only two live pages: the original radar view and the serial line monitor. */
@@ -44,6 +46,8 @@ class LivePlayDialog(
     private val owner: Activity,
     private val settings: () -> LivePlaySettings,
     private val inspectTrack: (RadarTrack) -> Unit,
+    private val openFilters: () -> Unit,
+    private val openSettings: () -> Unit,
     private val initialScreen: Int
 ) : Dialog(owner) {
     private val ui = Handler(Looper.getMainLooper())
@@ -73,15 +77,18 @@ class LivePlayDialog(
     private var recordPending: AircatWifiSession? = null
     private var recordMessage = ""
     private var login: SyncLogin? = null
+    private var retryCount = 0
+    private var failureMessage = ""
+    private var recordStartedMs = 0L
+    private lateinit var recordStatus: TextView
+    private var appliedSettings: LivePlaySettings? = null
+    private val retry = Runnable {
+        if (!closed && connecting) login?.let { begin(it, retrying=true) }
+    }
 
     private val connection = WifiNetworkConnection(
         owner,
-        state = { if (!closed) {
-            networkMessage = it
-            if (it.startsWith("Δεν ολοκληρώθηκε") || it.startsWith("Αδυναμία") ||
-                it.startsWith("Η άδεια δεν") || it.startsWith("Android 8/9") ||
-                it.startsWith("Χάθηκε η σύνδεση")) connecting = false
-        } },
+        state = { if (!closed) networkMessage = it },
         ready = { network: Network ->
             if (!closed) {
                 stopSession()
@@ -94,7 +101,7 @@ class LivePlayDialog(
                     .also { it.start() }
             }
         },
-        lost = { stopSession() }
+        failed = { reason -> if (!closed) handleFailure(reason) }
     )
 
     private fun dp(value: Int) = (value * owner.resources.displayMetrics.density + .5f).toInt()
@@ -136,10 +143,13 @@ class LivePlayDialog(
             if (connecting || session?.snapshot?.running == true) disconnect() else connect(false)
         }
         recordButton = button("Record") { recordTapped() }.apply { isEnabled = false }
+        root.addView(row(button("Φίλτρα") { openFilters() }, button("Ρυθμίσεις") { openSettings() }))
         root.addView(if (screen == 0) row(connectButton, recordButton, button("Κλείσιμο") { dismiss() })
             else row(connectButton, button("Κλείσιμο") { dismiss() }))
         troubleshooting = label("").apply { textSize = 12f }
         root.addView(troubleshooting)
+        recordStatus = label("").apply { textSize = 12f; visibility = View.GONE }
+        if (screen == 0) root.addView(recordStatus)
         radarCounters = label("").apply { textSize = 12f }
         if (screen == 0) root.addView(radarCounters)
 
@@ -173,6 +183,7 @@ class LivePlayDialog(
         content.addView(monitorPanel, FrameLayout.LayoutParams(-1, -1))
         root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
+        applyLiveSettings()
         radarPanel.visibility = if (screen == 0) View.VISIBLE else View.GONE
         monitorPanel.visibility = if (screen == 1) View.VISIBLE else View.GONE
     }
@@ -187,18 +198,52 @@ class LivePlayDialog(
     }
 
     fun permissionResult(granted: Boolean) { connection.permissionResult(granted) }
+    fun wifiPanelResult() { connection.wifiPanelResult() }
+
+    private fun applyLiveSettings() {
+        val value=settings()
+        if(value==appliedSettings)return
+        appliedSettings=value
+        radar.filter=value.filter
+        radar.maxRangeNm=value.rangeNm
+        radar.maxRingNm=value.ringsNm
+        radar.labelSizeSp=value.labelSp
+        radar.uiFontSp=value.uiSp
+        replay.trailDepth=value.trailDepth
+    }
+
+    private fun handleFailure(reason: String) {
+        connection.close()
+        stopSession()
+        failureMessage=reason
+        connecting=false
+        networkMessage=reason
+        // A dropped link or failed HELLO gets one clean, delayed retry. Do not
+        // loop on denied permissions, a disabled radio or association timeout.
+        if(retryCount==0 && login!=null && connection.radioEnabled() &&
+            (reason.contains("Χάθηκε") || reason.contains("HELLO sent="))){
+            retryCount++
+            connecting=true
+            networkMessage="Επανασύνδεση σε 8s μετά την αποδέσμευση του SYNC..."
+            ui.removeCallbacks(retry)
+            ui.postDelayed(retry,8000)
+        }
+    }
 
     private fun connect(auto: Boolean) {
         val saved = login ?: credentials.load()
         if (saved != null && auto) begin(saved) else askCredentials(saved)
     }
 
-    private fun begin(value: SyncLogin) {
+    private fun begin(value: SyncLogin, retrying: Boolean=false) {
+        ui.removeCallbacks(retry)
+        if(!retrying){retryCount=0;failureMessage=""}
+        stopSession()
         login = value
         pin = value.pin
         connecting = true
         networkMessage = "Αναμονή σύνδεσης SYNC..."
-        connection.connect(value.password)
+        connection.connect(value.password,forceNew=retrying)
     }
 
     private fun askCredentials(saved: SyncLogin?) {
@@ -253,7 +298,7 @@ class LivePlayDialog(
     private fun recordTapped() {
         recorder?.let { if (!it.finished) { it.stop(); return } }
         val current = session ?: return
-        if (!current.snapshot.running || !current.snapshot.transport.acknowledged) return
+        if (!current.snapshot.running || current.snapshot.lastAckAgoMs == null) return
         recordPending = current
         try {
             owner.startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -273,6 +318,7 @@ class LivePlayDialog(
         if (uri == null || closed || current == null || current !== session) return
         try {
             recordMessage = ""
+            recordStartedMs = SystemClock.elapsedRealtime()
             recorder = current.record(onFinished = { rows, error ->
                 ui.post {
                     recordMessage = error ?: if (rows > 0) "CSV αποθηκεύτηκε: $rows frames" else "CSV χωρίς δεδομένα (0 frames)"
@@ -285,9 +331,16 @@ class LivePlayDialog(
     private fun stopSession() {
         session?.close()
         session = null
+        recordPending = null
+        replay.clear()
+        lastPacket = null
+        sectorEpoch = 0.0
+        if (::radar.isInitialized) radar.sweepAzimuthDegrees = Float.NaN
     }
 
     private fun disconnect() {
+        ui.removeCallbacks(retry)
+        failureMessage=""
         connecting = false
         connection.close()
         stopSession()
@@ -297,6 +350,7 @@ class LivePlayDialog(
     private val tick = object : Runnable {
         override fun run() {
             if (closed || !isShowing) return
+            applyLiveSettings()
             val current = session
             if (current == null) {
                 status.text = networkMessage
@@ -322,38 +376,40 @@ class LivePlayDialog(
                 }
                 val snap = current.snapshot
                 if (!snap.running) {
-                    connecting = false
-                    networkMessage = snap.message
-                    connection.close()
-                    stopSession()
+                    handleFailure(snap.message+"\n"+connection.diagnostics())
+                } else {
+                    if (screen == 1) monitor.text = monitorText(snap, current)
+                    if (screen == 0) radarCounters.text = radarSummary(snap)
                 }
-                status.text = if (!snap.running) snap.message
-                    else if (!snap.transport.acknowledged) "Αναμονή σύνδεσης · HELLO/ACK..."
-                    else if (snap.lastDataAgoMs == null || snap.lastDataAgoMs > 3000) "Σύνδεση επιτυχής · αναμονή πακέτων..."
-                    else "Ζωντανή λήψη SYNC2WIFI"
-                status.append("\n" + snap.transport.firmwareLabel + " · CLOCK " + snap.transport.clockHz + " Hz")
-                if (screen == 1) monitor.text = monitorText(snap, current)
-                if (screen == 0) radarCounters.text = radarSummary(snap)
             }
             val snap = session?.snapshot
-            val live = snap?.running == true && snap.lastDataAgoMs?.let { it <= 3000 } == true
+            val linked = snap?.running == true && snap.lastAckAgoMs != null
             val active = connecting || snap?.running == true
+            if(linked){connecting=false;failureMessage="";retryCount=0}
             connectButton.text = if (active) "Διακοπή Σύνδεσης" else "Σύνδεση SYNC"
-            troubleshooting.visibility = if (live) View.GONE else View.VISIBLE
-            troubleshooting.text = when {
-                snap?.transport?.acknowledged == true -> "✓ Wi-Fi / DHCP · ✓ HELLO/ACK\nΑναμονή UDP 5005: έλεγξε CLOCK/DATA."
-                snap != null -> "✓ Wi-Fi / DHCP · αναμονή ACK 5006\nΈλεγξε PIN και firmware."
-                else -> "Έλεγξε ότι το SYNC είναι ενεργό και ο υπολογιστής έχει αποσυνδεθεί. Το ESP32 δέχεται 1 συσκευή. Επιβεβαίωσε το αίτημα Android / άδεια Wi-Fi. Αν χρειαστεί, συνδέσου από τις ρυθμίσεις Android και ξαναδοκίμασε."
-            } + if (login != null || credentials.hasSaved()) "\nPassword: **** · PIN: ****" else ""
+            status.visibility = if(linked) View.GONE else View.VISIBLE
+            troubleshooting.visibility = if(linked || failureMessage.isEmpty()) View.GONE else View.VISIBLE
+            val spinner=charArrayOf('|','/','—','\\')[(SystemClock.elapsedRealtime()/150%4).toInt()]
+            status.text=when {
+                linked -> ""
+                active -> "$spinner "+(snap?.message ?: networkMessage)
+                else -> if(failureMessage.isEmpty())networkMessage else "Αποτυχία σύνδεσης SYNC"
+            }
+            troubleshooting.text=failureMessage
             val rec = recorder
+            val recording=rec?.isAccepting()==true
             recordButton.text = when {
                 rec == null || rec.finished -> "Record"
-                rec.isAccepting() -> "REC " + rec.rows + " · Stop"
+                recording -> "REC "+formatRecordDuration((SystemClock.elapsedRealtime()-recordStartedMs)/1000)
                 else -> "Αποθήκευση..."
             }
-            recordButton.isEnabled = recordPending == null && (rec?.isAccepting() == true ||
-                ((rec == null || rec.finished) && snap?.running == true && snap.transport.acknowledged))
-            if (recordMessage.isNotEmpty()) status.append("\n" + recordMessage)
+            recordButton.backgroundTintList=ColorStateList.valueOf(if(recording) Color.rgb(190,25,25) else Color.rgb(189,230,250))
+            recordButton.setTextColor(if(recording) Color.WHITE else Color.rgb(19,57,81))
+            recordButton.isEnabled=recordPending==null && (recording || ((rec==null || rec.finished) && linked))
+            recordStatus.text=recordMessage
+            recordStatus.visibility=if(recordMessage.isEmpty())View.GONE else View.VISIBLE
+            if(snap==null && screen==0)radarCounters.text=""
+            if(snap==null && screen==1)monitor.text="Αναμονή AIRCAT500 UDP δεδομένων..."
             ui.postDelayed(this, 100)
         }
     }
@@ -363,9 +419,7 @@ class LivePlayDialog(
         val bsc = s.bsc
         val plain = buildString {
             appendLine("AIRCAT500 — Radar Serial Line Monitor")
-            appendLine("Wi-Fi SYNC · ESP32-S3 192.168.4.1 · UDP DATA 5005 / HELLO 5006")
-            appendLine(transport.firmwareLabel)
-            appendLine("CLOCK: ${transport.clockHz} Hz · ${s.message}")
+            appendLine("CLOCK: ${transport.clockHz} Hz")
             appendLine()
             appendLine("BSC bytes: ${bsc.bytes} · SYNC: ${bsc.sync}")
             appendLine("Frames: ${bsc.framed} · CRC OK: ${bsc.valid}")
@@ -420,6 +474,7 @@ class LivePlayDialog(
         if (!closed) {
             closed = true
             ui.removeCallbacks(tick)
+            ui.removeCallbacks(retry)
             connection.close()
             stopSession()
         }

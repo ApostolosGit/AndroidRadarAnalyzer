@@ -78,15 +78,25 @@ class WifiCsvRecorder(
     }
 }
 
+internal fun formatRecordDuration(seconds: Long): String {
+    val total=seconds.coerceAtLeast(0)
+    return when {
+        total<60 -> "%02ds".format(Locale.US,total)
+        total<3600 -> "%d:%02dmin".format(Locale.US,total/60,total%60)
+        else -> "%dh:%02dm".format(Locale.US,total/3600,(total/60)%60)
+    }
+}
+
 data class WifiSessionSnapshot(val transport: WifiCounters=WifiCounters(),
     val bsc: LiveBscCounters=LiveBscCounters(),val message: String="Αναμονή HELLO/ACK...",
-    val running: Boolean=true,val lastDataAgoMs: Long?=null,val timing: LiveTimingSnapshot=LiveTimingSnapshot())
+    val running: Boolean=true,val lastDataAgoMs: Long?=null,val timing: LiveTimingSnapshot=LiveTimingSnapshot(),
+    val lastAckAgoMs: Long?=null,val helloSent: Long=0,val ackReceived: Long=0)
 
 /** Socket binding is injected so the transport is also JVM-testable. */
 class AircatWifiSession(
     private val bindSocket: (DatagramSocket)->Unit,
     private val host: String="192.168.4.1",private val dataPort: Int=5005,private val helloPort: Int=5006,
-    private val pin: String="1234",private val handshakeTimeoutMs: Long=22000
+    private val pin: String="1234",private val handshakeTimeoutMs: Long=22000, private val ackTimeoutMs: Long=9000
 ) : AutoCloseable {
     val frames=WifiFrameBuffer()
     @Volatile var snapshot=WifiSessionSnapshot();private set
@@ -107,6 +117,19 @@ class AircatWifiSession(
     }
     fun stopRecording(){recorder?.stop()}
     private fun monotonicMs()=System.nanoTime()/1_000_000L
+    @Synchronized private fun openSockets(): Pair<DatagramSocket,DatagramSocket>? {
+        if(stopped)return null
+        val data=DatagramSocket(null)
+        dataSocket=data
+        data.receiveBufferSize=262144
+        data.reuseAddress=false
+        data.bind(InetSocketAddress(dataPort))
+        data.soTimeout=250
+        bindSocket(data)
+        val hello=DatagramSocket(0)
+        helloSocket=hello;hello.soTimeout=250;bindSocket(hello)
+        return Pair(data,hello)
+    }
     private fun receiveLoop() {
         val protocol=AircatWifiProtocol()
         val parser=AircatBscStream()
@@ -116,17 +139,13 @@ class AircatWifiSession(
         var lastHello=startMono-2000
         var lastData: Long?=null
         var lastNetworkError=""
+        var lastAck: Long?=null
+        var helloSent=0L
+        var ackReceived=0L
+        fun debug()="UDP HELLO $host:$helloPort · DATA :$dataPort · HELLO sent=$helloSent · ACK received=$ackReceived · $lastNetworkError"
         try {
             val address=InetAddress.getByName(host)
-            val data=DatagramSocket(null)
-            dataSocket=data
-            data.receiveBufferSize=262144
-            data.reuseAddress=false
-            data.bind(InetSocketAddress(dataPort))
-            data.soTimeout=250
-            bindSocket(data)
-            val hello=DatagramSocket(0)
-            helloSocket=hello;hello.soTimeout=100;bindSocket(hello)
+            val (data,hello)=openSockets() ?: return
             val bytes=ByteArray(2048)
             while(!stopped) {
                 var now=monotonicMs()
@@ -134,17 +153,24 @@ class AircatWifiSession(
                     lastHello=now
                     try {
                         val request="AIRCAT_HELLO_V1 $pin".toByteArray(Charsets.US_ASCII)
+                        helloSent++
                         hello.send(DatagramPacket(request,request.size,address,helloPort))
                         val ack=DatagramPacket(ByteArray(256),256)
                         hello.receive(ack)
-                        if(ack.address==address && protocol.acceptHello(ack.data.copyOf(ack.length)))lastNetworkError=""
+                        if(ack.address==address && ack.port==helloPort &&
+                            protocol.acceptHello(ack.data.copyOf(ack.length))){
+                            lastAck=monotonicMs();ackReceived++;lastNetworkError=""
+                        } else lastNetworkError="Μη αναμενόμενη απάντηση HELLO (πηγή/μορφή)"
                     } catch(ex: WifiBusyException){throw ex}
-                    catch(_: SocketTimeoutException){}
+                    catch(_: SocketTimeoutException){lastNetworkError="ACK timeout"}
                     catch(ex: java.io.IOException){if(stopped)break;lastNetworkError=ex.message ?: "Σφάλμα διαδρομής Wi-Fi"}
                 }
-                val status=protocol.snapshot()
-                if(!status.acknowledged && status.received==0L && now-startMono>=handshakeTimeoutMs)
-                    error("Δεν έφτασε ACK από $host:$helloPort. Έλεγξε SYNC, κωδικό Wi-Fi, PIN και firmware. $lastNetworkError")
+                now=monotonicMs()
+                val confirmed=lastAck
+                if(confirmed==null && now-startMono>=handshakeTimeoutMs)
+                    error("Wi-Fi/DHCP διαθέσιμα, αλλά δεν επιβεβαιώθηκε το PIN/HELLO. Πιθανές αιτίες: PIN, UDP διαδρομή ή ESP32.")
+                if(confirmed!=null && now-confirmed>=ackTimeoutMs)
+                    error("Χάθηκε η επιβεβαίωση HELLO/ACK για ${(now-confirmed)/1000}s.")
                 try {
                     val datagram=DatagramPacket(bytes,bytes.size)
                     data.receive(datagram)
@@ -166,22 +192,24 @@ class AircatWifiSession(
                 val s=protocol.snapshot()
                 val age=lastData?.let{(monotonicMs()-it).coerceAtLeast(0)}
                 val message=when {
-                    !s.acknowledged -> "Αναμονή HELLO/ACK από τη συσκευή..."
+                    lastAck==null -> "Αναμονή HELLO/ACK από τη συσκευή..."
                     age==null -> "ACK OK · αναμονή DATA/CLOCK"
                     age>3000 -> "Wi-Fi ACK · αναμονή νέων δεδομένων (${age/1000}s)"
                     else -> "Ζωντανή λήψη SYNC2WIFI"
                 }
-                snapshot=WifiSessionSnapshot(s,parser.snapshot(),message,true,age,timing.snapshot())
+                snapshot=WifiSessionSnapshot(s,parser.snapshot(),message,true,age,timing.snapshot(),
+                    lastAck?.let { (monotonicMs()-it).coerceAtLeast(0) },helloSent,ackReceived)
             }
         } catch(ex: Exception) {
-            if(!stopped)snapshot=WifiSessionSnapshot(protocol.snapshot(),parser.snapshot(),"Σφάλμα Wi-Fi: ${ex.message}",false,timing=timing.snapshot())
+            if(!stopped)snapshot=WifiSessionSnapshot(protocol.snapshot(),parser.snapshot(),"Σφάλμα Wi-Fi: ${ex.message}\n"+debug(),false,timing=timing.snapshot(),
+                lastAckAgoMs=lastAck?.let { (monotonicMs()-it).coerceAtLeast(0) },helloSent=helloSent,ackReceived=ackReceived)
         } finally {
             close()
             if(snapshot.running)snapshot=snapshot.copy(message="Η λήψη σταμάτησε",running=false)
         }
     }
     @Synchronized override fun close() {
-        stopped=true;dataSocket?.close();helloSocket?.close();recorder?.stop()
+        stopped=true;dataSocket?.close();helloSocket?.close();dataSocket=null;helloSocket=null;recorder?.stop()
     }
 }
 
