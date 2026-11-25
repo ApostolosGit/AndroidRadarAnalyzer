@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: liveplay-v401-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   android-liveplay:
     runs-on: ubuntu-latest
@@ -74,13 +78,14 @@ jobs:
         run: |
           set -euo pipefail
           dest=versions/v4.01
-          test ! -e "$dest/apk/AIRCAT500_V4.01_LivePlay_parallel_APK.zip"
+          if [ -e "$dest/apk/AIRCAT500_V4.01_LivePlay_parallel_APK.zip" ]; then echo "Archive already exists; refusing overwrite"; exit 1; fi
           mkdir -p "$dest/source" "$dest/apk"
           git fetch origin "$SOURCE_SHA"
           git archive "$SOURCE_SHA" | tar -x -C "$dest/source"
           cp /tmp/aircat-v401-apk/* "$dest/apk/"
           (cd "$dest/apk"; sha256sum --check AIRCAT500_V4.01_LivePlay_SHA256SUMS.txt; zip -q AIRCAT500_V4.01_LivePlay_parallel_APK.zip AIRCAT500_V4.01_LivePlay_parallel.apk AIRCAT500_V4.01_LivePlay_SHA256SUMS.txt)
           printf '# AIRCAT500 Mobile v4.01\n\nSource commit: %s\n\nVerified debug APK and checksum in apk/. Physical ESP32 reconnection still requires device testing. Previous versions unchanged.\n' "$SOURCE_SHA" > "$dest/README.md"
+          cp "$dest/source/LIVEPLAY_PORT_GR.md" "$dest/CHANGELOG_GR.md"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f "$dest"
