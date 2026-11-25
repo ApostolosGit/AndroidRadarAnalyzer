@@ -1,0 +1,52 @@
+# AIRCAT500 Mobile v4.01 – SYNC2WIFI
+
+Βάση: επίσημη v2.2, με το απομονωμένο LivePlay v3.0. Το αρχικό APK, tag, firmware και παλαιότερα branches δεν αλλάζουν. Στο main προστίθεται μόνο ο νέος φάκελος έκδοσης. Package gr.aircat.androidradaranalyzer.liveplay, versionName 4.01, versionCode 12. Το APK debug μπορεί να απαιτεί απεγκατάσταση μόνο προηγούμενης LivePlay έκδοσης λόγω υπογραφής.
+
+Άνοιγμα → Αρχείο (αρχική chooseFile) ή SYNC2WIFI → Live Radar Display / Radar Serial Line Monitor. Αυτόματη πρώτη προσπάθεια, αποθηκευμένα στοιχεία κρυπτογραφημένα με Android Keystore, κωδικοί κρυμμένοι, επιλογή εμφάνισης στο dialog. Μετά την πρώτη εισαγωγή επαναχρησιμοποιούνται χωρίς διάλογο κατά το αυτόματο άνοιγμα, ενώ η χειροκίνητη νέα προσπάθεια επιτρέπει επιβεβαίωση/διόρθωση. Ένα toggle σύνδεσης και Κλείσιμο, Record μόνο στο Radar. Αν υπάρχει ήδη δίκτυο 192.168.4.x δοκιμάζεται πρώτα (επιβεβαίωση HELLO/ACK, όχι μόνο IP). Η πρώτη συσκευή πρέπει να έχει αποσυνδεθεί (AP max 1). Android 8/9: απαιτείται σύνδεση από τις ρυθμίσεις. Η σύνδεση Android μπορεί να ζητήσει άδεια/επιβεβαίωση.
+
+Monitor: οι μετρητές προβλημάτων με κόκκινο. UDP duplicates κανονικές επαναλήψεις v40.0. Radar: packet, tracks, NORTH/sector, missing, missed/jitter, CRC/framing/UDP. Οι χρονικές μετρήσεις βασίζονται στο χρόνο άφιξης Android (UDP jitter πιθανό), median μετά από 10 διαστήματα και κατώφλια Python 1.9 / 5%. Record: CSV με 16 πεδία Python v40.0, CRC-valid frames, ανεξάρτητη bounded queue 2048, flush ανά δευτερόλεπτο, επιλογή θέσης μέσω Android SAF, χωρίς εξάρτηση από UI. Δεν μεταφέρθηκαν Record Filters ή sidecar metadata/USB. Σε πλήρη ουρά η καταγραφή σταματά με εμφανές σφάλμα. Η φυσική σύνδεση δεν επιβεβαιώνεται από CI. Δεν προορίζεται για επιχειρησιακό έλεγχο εναέριας κυκλοφορίας.
+
+## v4.01
+Φίλτρα/Ρυθμίσεις από τα αρχικά dialogs, εφαρμογή στο live radar (και βάθος ιστορικού). REC κόκκινο με monotonic χρόνο 00s, 1:30min, 1h:15m. Τα κείμενα σύνδεσης κρύβονται μετά το πραγματικό ACK. Spinner κατά τη σύνδεση, χωριστά diagnostics association/DHCP/HELLO, χωρίς κωδικούς. Android 10+: το σύστημα απαιτεί επιβεβαίωση ενεργοποίησης Wi-Fi, ανοίγει το Wi-Fi panel. Android 8/9 επιχειρεί ενεργοποίηση. Αποδέσμευση callbacks και sockets, ACK watchdog 9s και μία νέα προσπάθεια μετά από απώλεια/HELLO timeout με καθυστέρηση 8s. Δεν αλλάζει το firmware ούτε ο περιορισμός max 1. Απαιτείται πραγματική δοκιμή επανασύνδεσης στο τηλέφωνο.
+
+## Ιστορικό αλλαγών ανά προτροπή
+
+### 4.01 — 25/11/2026
+
+| Προτροπή χρήστη | Πρόβλημα | Αλλαγή | Αρχεία |
+|---|---|---|---|
+| «να παραμένουν οι επιλογές φίλτρα και ρυθμίσεις και στο LIVE» | Μετά την επιλογή Wi-Fi χάνονται τα αρχικά μενού | Επαναχρησιμοποίηση των αρχικών dialogs και συγχρονισμός φίλτρων, κλίμακας, ετικετών, μεγέθους κειμένου και ιστορικού με το Live radar | MainActivity.kt, LivePlayDialog.kt |
+| «το Record ... να γίνεται κόκκινο και να γράφει τον χρόνο» | Η κατάσταση REC και ο χρόνος δεν διακρίνονται εύκολα | Κόκκινο REC, λευκό κείμενο, χρόνος monotonic σε 00s, 1:30min, 1h:15m· αυτόματη επαναφορά μετά το Stop | AircatWifiSession.kt, LivePlayDialog.kt, LiveV4Test.kt |
+| «να φεύγουν όλα τα κείμενα ... περιστρεφόμενη /» | Περιττές ενδείξεις σύνδεσης και ασαφής αναμονή | Περιστρεφόμενο σύμβολο κατά την προσπάθεια, απόκρυψη ενδείξεων μετά από πραγματικό UDP ACK, ξεχωριστή κατάσταση CSV | LivePlayDialog.kt |
+| «εάν ... κλειστό το WiFi να το ανοίγει» | Αποτυχία όταν το Wi-Fi είναι OFF | Αυτόματη προσπάθεια ενεργοποίησης σε Android 8/9· επίσημο Wi-Fi panel με επιβεβαίωση χρήστη σε Android 10+ | WifiNetworkConnection.kt, MainActivity.kt |
+| «όταν ... κλείσει ... δεν μπορείς να ξανασυνδεθείς ... Android timeout» | Παλιό αίτημα δικτύου/socket και παλιό ACK μπορούν να διατηρήσουν ανεπιθύμητη κατάσταση | Ακύρωση callback/χρονιστών σε κάθε τερματισμό, συγχρονισμένο άνοιγμα/κλείσιμο UDP sockets, ACK watchdog 9s, μία καθαρή επανασύνδεση μετά από 8s όταν χαθεί η επικοινωνία | WifiNetworkConnection.kt, AircatWifiSession.kt, LivePlayDialog.kt, LivePlayProtocolTest.kt |
+| «βάλε περισσότερες debug πληροφορίες» | Το timeout συσχέτισης AP συγχέεται με σφάλμα PIN | Στάδιο association/DHCP/HELLO, Android API, Wi-Fi ON/OFF, άδεια, IPv4, χρόνος, HELLO/ACK counters και τελευταία αποτυχία· όχι εμφάνιση κωδικών | WifiNetworkConnection.kt, AircatWifiSession.kt |
+| «ανέβασέ τα σε ξεχωριστό φάκελο ... APK σε ZIP» | Ανάγκη ανεξάρτητης έκδοσης και επαναλήψιμης εγκατάστασης | v4.01, versionCode 12, ξεχωριστό branch, αρχειοθέτηση source/APK/ZIP/checksum μόνο μετά από επιτυχή CI | Gradle, Manifest, workflow |
+| «γράφε σε κάθε έκδοση τι άλλαξες και μετά από ποια προτροπή ...» | Έλλειψη ιχνηλασιμότητας αλλαγών | Η παρούσα ενότητα συνδέει κάθε αλλαγή με την προτροπή και το πρόβλημα. Διατηρείται σε κάθε μελλοντικό version snapshot | LIVEPLAY_PORT_GR.md |
+
+**Έλεγχοι:** αυτοματοποιημένα tests για χρονικά όρια REC, UDP επανασύνδεση μετά από απώλεια ACK, CRC και διατήρηση offline v2.2. Η πραγματική αποτυχία συσχέτισης του συγκεκριμένου Android με ESP32 δεν αναπαράχθηκε εδώ. Απαιτείται δοκιμή με το κινητό: σύνδεση, απώλεια Wi-Fi/ESP32, επανασύνδεση, νέα καταγραφή. Το firmware v40.0 παραμένει αμετάβλητο και δέχεται μία συσκευή Wi-Fi.
+
+## v5.0 — Προετοιμασία TCP (όχι έκδοση για εγκατάσταση)
+
+Προτροπή χρήστη: «να ξέρουμε ότι δεν φταίει η πηγή (RADAR) ...» και να μη συγχέονται απώλειες της σύνδεσης με απώλειες sector. Προτροπή LIVE: sector στη θέση tracks, μόνο targets στο κάτω μέρος, miss αντί missing, CRC/Framing/UDP lost μόνο όταν είναι μη μηδενικά, Σύνδεση/Διακοπή, χωρίς Reset.
+
+Αλλαγές προετοιμασίας UI: LivePlayDialog.kt, RadarView.kt. Το offline footer διατηρείται με την προεπιλογή liveTargetsOnly=false. Η εμφάνιση sector είναι δεκαεξαδική όπως στο προηγούμενο footer. Ο κύριος μετρητής sector miss εμφανίζει μόνο missingClean και τα αμφίβολα εμφανίζονται χωριστά. Προσωρινά παραμένει η UDP υλοποίηση· δεν αποτελεί TCP build. Ο έλεγχος v2.2 προσαρμόστηκε μόνο για την αναστρέψιμη live-only προσθήκη στο RadarView.
+
+Απαιτήσεις για την τελική TCP έκδοση (δεν υλοποιούνται ακόμη σε αυτό το commit):
+- Μόνο TCP, χωρίς επιλογή UDP. Χωρίς αλλαγές στη v4.0, v4.01 και firmware v40.0.
+- Διακριτά source/capture, transport και indeterminate counters. Ένα sector miss καταλογίζεται στην είσοδο capture μόνο σε πλήρη NORTH-to-NORTH περιστροφή χωρίς διακοπή/overflow/αμφίβολα frames. Δεν αποδεικνύει μόνο του εσωτερικό ελάττωμα RADAR έναντι φυσικής γραμμής/λήπτη.
+- Source continuity metadata: boot/session identity, sequence/byte offset, overflow/capture counters και source timestamps για NORTH timing· δεν υπολογίζουμε radar jitter από TCP arrival delays. Οι μετρητές μεταφοράς παραμένουν χωριστοί.
+- CSV: ρητή ασυνέχεια (gap event, timestamp, session identity, reason). Οι parsers Python και Android αναγνωρίζουν το gap και δεν σχηματίζουν περιστροφές ή NORTH intervals που το διασχίζουν. Διακοπή TCP τερματίζει μόνο την πληγείσα περίοδο· δεν χαρακτηρίζει αυτόματα κάποιο sector ως χαμένο από το RADAR. Τα παλιά CSV χωρίς metadata δηλώνονται ως άγνωστη συνέχεια.
+- Δεν αλλάζουμε τους ορισμούς CRC/Framing ώστε να βαφτίζονται σφάλματα μεταφοράς. Διαχωρισμός AC50 transport CRC και BSC CRC, με αβεβαιότητα όπου δεν υπάρχει επαρκής τεκμηρίωση.
+- Δοκιμές αποδοχής με γνωστή συνθετική μη επιχειρησιακή ροή: καθαρή περιστροφή, ένα σκόπιμα ελλείπον sector στη ροή εισόδου, διακοπή μεταφοράς εντός περιστροφής, ταυτόχρονα προβλήματα, overflow, νέο session και offline CSV επανάληψη. Καμία απόδοση απώλειας RADAR από διακοπή TCP.
+- Στην τελική έκδοση UDP lost αντικαθίσταται από μετρητή TCP gap/ασυνέχειας, όχι από αριθμό TCP retransmissions. Οι τελευταίες δεν αποτελούν απώλειες του byte stream.
+
+Κατάσταση: προετοιμασία UI και καταγραφή απαιτήσεων. Δεν έχει μεταγλωττιστεί ή ελεγχθεί σε συσκευή, δεν διανέμεται APK 5.0 από αυτό το branch.
+
+## v5.0 LAB candidate — 25/11/2026
+
+Added TCP-only synthetic lab session (AC5T), source timestamps, explicit CSV GAP rows, separate package so UDP apps stay installed, and unit tests for segmented TCP records and timing reset. The SSID is SYNC-LAB. Existing UDP transport is not selectable in this build; old UDP files remain for legacy regression tests. The old offline CSV analyzer refuses the new event format rather than counting gaps as source loss; use the companion Python LAB audit for these CSV files. This is a test prototype, not the full real-capture port. Hardware and real-source capture integration remain unverified.
+
+## v5.01 LAB — offline continuity audit
+
+Προτροπή χρήστη: επανέλεγχος και ολοκλήρωση εκκρεμοτήτων. Προστέθηκε ξεχωριστή εισαγωγή LAB CSV στο Android, με ρητή διάκριση GAP, αμφίβολης περιστροφής, οπισθοδρόμησης χρόνου, μη έγκυρης γραμμής και παρατηρούμενων sector miss. Ο παλαιός analyzer δεν διαβάζει το νέο event format. Ο έλεγχος αφορά μόνο καταγεγραμμένα συνθετικά LAB δεδομένα. Το CSV v5.0 παραλείπει heartbeats, επομένως μη επισημασμένη διαγραφή γραμμής δεν εντοπίζεται πάντα. Δεν προκύπτει διάγνωση φυσικής βλάβης RADAR. Οι εκδόσεις v2.2, v4.x και v5.0 LAB διατηρούνται. Απαιτείται νέα εγγραφή μετά από επανασύνδεση. Δεν αποτελεί επιχειρησιακή έκδοση.
