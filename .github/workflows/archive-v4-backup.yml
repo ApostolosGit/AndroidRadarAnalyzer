@@ -1,0 +1,21 @@
+name: Archive existing Android v4.0 backup
+on:
+  push:
+    branches: ['backup/v4-0-2026-11-27']
+    paths: ['.github/workflows/archive-v4-backup.yml']
+permissions:
+  contents: read
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: '2c78a68c761ad89f4d1ff7ce0ce1cae3bde9b6ae'
+      - name: Archive original tracked files only
+        run: git archive --format=zip --prefix=AndroidRadarAnalyzer/ -o /tmp/Android_v4.0_original.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Android_v4.0_original_backup
+          path: /tmp/Android_v4.0_original.zip
+          retention-days: 7

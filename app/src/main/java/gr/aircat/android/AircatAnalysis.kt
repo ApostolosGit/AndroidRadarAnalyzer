@@ -12,7 +12,19 @@ data class RadarFilter(
     val showOnlyAlerts: Boolean = false, val hideInvalidMode: Boolean = false,
     val minAltitudeFeet: Int? = null, val maxAltitudeFeet: Int? = null,
     val minSpeedKt: Int? = null, val maxSpeedKt: Int? = null,
-    val showRangeLabel: Boolean = false
+    val showRangeLabel: Boolean = false,
+    val showModeALabel: Boolean = true,
+    val showModeCLabel: Boolean = true,
+    val showTrackNumberLabel: Boolean = false,
+    val showSpeedLabel: Boolean = false,
+    val showQualityLabel: Boolean = false,
+    val showMissesLabel: Boolean = false,
+    val showTprLabel: Boolean = false,
+    val showLogSigmaLabel: Boolean = false,
+    val showNorthTimeLabel: Boolean = false,
+    val showTrackingWindowLabel: Boolean = false,
+    val showSmoothingLabel: Boolean = false,
+    val showVelocityVector: Boolean = false
 ) {
     fun allows(track: RadarTrack): Boolean {
         val altitude = track.modeC?.removeSuffix("ft")?.toIntOrNull()
@@ -179,7 +191,7 @@ object AircatAnalysis {
 /** Native text export, designed to be comparable to the supplied Python v9.16 summary. */
 object AircatReport {
     private fun fmt(value: Double?, digits: Int = 2) = value?.let { String.format(Locale.US, "% .${digits}f", it).trim() } ?: "n/a"
-    private fun section(text: String) = "\n${"-".repeat(54)}\n$text\n${"-".repeat(54)}\n"
+    private fun section(text: String) = "\n${"-".repeat(50)}\n$text\n${"-".repeat(50)}\n"
 
     fun create(capture: RadarCapture, stats: CaptureDiagnostics): String = buildString {
         val base = capture.summary
